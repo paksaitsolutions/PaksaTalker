@@ -1,3 +1,15 @@
+# Environment and virtual environment
+.env
+.venv
+venv/
+ENV/
+env/
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
