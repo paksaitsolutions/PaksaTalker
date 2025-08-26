@@ -1,3 +1,31 @@
+# Environment and virtual environment
+.env
+.venv
+venv/
+ENV/
+env/
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Frontend environment files
+frontend/.env
+frontend/.env.*
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/out/
+frontend/.nuxt/
+frontend/.cache/
+frontend/.vscode/
+frontend/.idea/
+frontend/.sass-cache/
+frontend/coverage/
+frontend/.DS_Store
+frontend/Thumbs.db
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -179,3 +207,63 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Local development directories
+awesome-gesture_generation/
+frontend/.env.development
+frontend/.env.production
+frontend/.env.local
+*.env
+.env.development.local
+.env.development
+# Node modules
+node_modules/
+frontend/node_modules/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Model files
+models/**/*.pth
+models/**/*.pth.tar
+models/**/*.dat
+# Temporary files
+temp/
+*.tmp
+*.temp
+# Large files
+*.pt
+*.pth
+*.bin
+*.7z
+*.mp4
+*.avi
+*.mov
+*.flv
+*.wmv
+*.mkv
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+*.m4a
+*.wma
+*.aiff
+*.au
+
+# Large data files
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.pt
+*.bin
+*.onnx
+
+# Temporary files
+temp/
+*.tmp
+*.temp

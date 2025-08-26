@@ -1,4 +1,4 @@
-""SadTalker integration for PaksaTalker"""
+"""SadTalker integration for PaksaTalker"""
 import os
 import torch
 import numpy as np
@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 
 from .base import BaseIntegration
-from ...config import config
+from config import config
 
 # Import SadTalker with error handling
 try:

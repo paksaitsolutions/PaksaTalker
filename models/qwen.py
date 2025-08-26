@@ -1,4 +1,4 @@
-""Qwen language model implementation for PaksaTalker."""
+""""Qwen language model implementation for PaksaTalker."""
 import os
 import torch
 from typing import Optional, Dict, Any, List, Union
@@ -182,7 +182,7 @@ class QwenModel(BaseModel):
         Returns:
             Dictionary containing analysis results with keys like 'style', 'mood', 'gestures', etc.
         """
-        analysis_prompt = f"""Analyze the following video generation request and extract key parameters.
+        analysis_prompt = """Analyze the following video generation request and extract key parameters.
         Return a JSON object with these fields:
         - style: The overall style of the video (e.g., 'professional', 'casual', 'dramatic')
         - mood: The emotional tone (e.g., 'happy', 'serious', 'excited')

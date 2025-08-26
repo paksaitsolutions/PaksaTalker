@@ -1,7 +1,8 @@
-""
+"""
 Cleanup script for PaksaTalker.
 This script helps clean up temporary files and verify the installation.
 """
+
 import os
 import shutil
 from pathlib import Path

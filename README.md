@@ -6,9 +6,13 @@
 
 PaksaTalker is an enterprise-grade AI framework for generating hyper-realistic talking head videos with perfect lip-sync, natural facial expressions, and life-like gestures. Built on cutting-edge AI research, it seamlessly integrates multiple state-of-the-art models to deliver production-ready video synthesis.
 
+PaksaTalker is an advanced AI-powered platform that creates hyper-realistic talking avatars with synchronized facial expressions and natural body gestures. The system combines multiple state-of-the-art AI models including Qwen for language processing, SadTalker for facial animation, and PantoMatrix/EMAGE for full-body gesture generation, delivering production-ready video synthesis with unprecedented realism.
+
+
 ## 🌟 Key Features
 
 ### 🎭 Natural Animation
+
 - **Precise Lip-Sync**: Frame-accurate audio-visual synchronization
 - **Expressive Faces**: Emotionally aware facial animations
 - **Natural Gestures**: Context-appropriate head movements and expressions
@@ -27,6 +31,26 @@ PaksaTalker is an enterprise-grade AI framework for generating hyper-realistic t
 - Support for custom voice models
 - Multi-language support
 
+- **Precise Lip-Sync**: Frame-accurate audio-visual synchronization using SadTalker
+- **Expressive Faces**: Emotionally aware facial animations with micro-expressions
+- **Full-Body Gestures**: Context-appropriate body language and hand movements
+- **High Fidelity**: 4K resolution support with DSLR-quality rendering
+
+### 🛠️ Technical Capabilities
+- **Multi-Model Architecture**: Integrates Qwen LLM, SadTalker, and PantoMatrix
+- **GPU-Accelerated**: Optimized for NVIDIA GPUs with CUDA support
+- **Modular Design**: Swappable components for customization
+- **High-Quality Output**: 1080p+ resolution with advanced rendering
+- **RESTful API**: Easy integration with existing systems
+
+### 🧩 Extensible Architecture
+- **Modular Pipeline**: Independent components for face, body, and voice
+- **Custom Avatars**: Support for 3D models and 2D images
+- **Plugin System**: Extend with custom models and effects
+- **Multi-Language**: Support for multiple languages and accents
+- **Customization**: Fine-tune animation styles and rendering parameters
+
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -36,6 +60,14 @@ PaksaTalker is an enterprise-grade AI framework for generating hyper-realistic t
 - ffmpeg 4.4+
 - 8GB+ VRAM recommended
 
+- **Python 3.9+** with pip
+- **Node.js 16+** and npm 8+ (for web interface)
+- **CUDA 11.8+** (for GPU acceleration)
+- **ffmpeg 4.4+** for video processing
+- **NVIDIA GPU** with 16GB+ VRAM recommended
+- **Docker** (optional, for containerized deployment
+
+
 ### Installation
 
 1. **Clone the repository**:
@@ -44,25 +76,42 @@ PaksaTalker is an enterprise-grade AI framework for generating hyper-realistic t
    cd paksatalker
    ```
 
-2. **Set up environment**:
+2. **Set up Python environment**:
    ```bash
    # Create and activate virtual environment
    python -m venv venv
-   source venv/bin/activate  # Linux/Mac
-   .\venv\Scripts\activate  # Windows
-   ```
+   # On Windows:
+   .\venv\Scripts\activate
+   # On macOS/Linux:
+   # source venv/bin/activate
 
-3. **Install dependencies**:
-   ```bash
+   # Install Python dependencies
    pip install -r requirements.txt
    ```
 
-4. **Download pre-trained models**:
+3. **Install AI Models**:
    ```bash
-   python -m PaksaTalker.download_models
+   # Download SadTalker models
+   python -c "from models.sadtalker import download_models; download_models()"
+   
+   # Download PantoMatrix/EMAGE models
+   python -c "from models.gesture import download_models; download_models()"
+   
+   # Download Qwen model weights (optional, can use API)
+   # python -c "from models.qwen import download_models; download_models()"
+   ```
+
+4. **Set up frontend** (for web interface):
+   ```bash
+   cd frontend
+   npm install
+   npm run build
+   cd ..
+
    ```
 
 ## 🖥️ Quick Start
+
 
 ### Command Line Interface
 
@@ -90,6 +139,107 @@ python -m PaksaTalker.cli \
 
 ```python
 from PaksaTalker import PaksaTalker
+
+### Generate a Talking Avatar from Text
+
+```bash
+# Generate speech and animate avatar from text
+python -m cli.generate \
+    --text "Hello, I'm your AI assistant. Welcome to PaksaTalker!" \
+    --image assets/avatars/default.jpg \
+    --voice en-US-JennyNeural \
+    --output output/welcome.mp4 \
+    --gesture-style natural \
+    --resolution 1080
+```
+
+### Animate with Custom Audio
+
+```bash
+# Animate avatar with existing audio
+python -m cli.animate \
+    --image assets/avatars/presenter.jpg \
+    --audio input/presentation.wav \
+    --output output/presentation.mp4 \
+    --expression excited \
+    --background blur \
+    --lighting studio
+```
+
+### Advanced Options
+
+```bash
+# Full pipeline with custom settings
+python -m cli.pipeline \
+    --prompt "Explain quantum computing in simple terms" \
+    --avatar assets/avatars/scientist.jpg \
+    --voice en-US-ChristopherNeural \
+    --style professional \
+    --gesture-level high \
+    --output output/quantum_explainer.mp4 \
+    --resolution 4k \
+    --fps 30 \
+    --enhance-face \
+    --background office
+```
+
+## 🐍 Python API
+
+### Basic Usage
+
+```python
+from paksatalker import Pipeline
+
+# Initialize the pipeline
+pipeline = Pipeline(
+    model_dir="models",
+    device="cuda"  # or "cpu" if no GPU
+)
+
+# Generate a talking avatar video
+result = pipeline.generate(
+    text="Welcome to PaksaTalker, the future of digital avatars.",
+    image_path="assets/avatars/host.jpg",
+    voice="en-US-JennyNeural",
+    output_path="output/welcome.mp4",
+    gesture_style="casual",
+    resolution=1080
+)
+
+print(f"Video generated at: {result['output_path']}")
+```
+
+### Advanced Usage
+
+```python
+from paksatalker import (
+    TextToSpeech,
+    FaceAnimator,
+    GestureGenerator,
+    VideoRenderer
+)
+
+# Initialize components
+tts = TextToSpeech(voice="en-US-ChristopherNeural")
+animator = FaceAnimator(model_path="models/sadtalker")
+gesture = GestureGenerator(model_path="models/pantomatrix")
+renderer = VideoRenderer(resolution=1080, fps=30)
+
+# Process pipeline
+text = "Let me show you how this works..."
+audio = tts.generate(text)
+face_animation = animator.animate("assets/avatars/assistant.jpg", audio)
+body_animation = gesture.generate(audio, style="presentation")
+
+# Render final video
+video = renderer.combine(
+    face_animation=face_animation,
+    body_animation=body_animation,
+    audio=audio,
+    output_path="output/demo.mp4"
+)
+```
+
 from pathlib import Path
 
 # Initialize with custom settings
@@ -167,6 +317,40 @@ PaksaTalker/
 ├── app.py              # Main application
 ├── cli.py              # Command-line interface
 └── requirements.txt    # Dependencies
+
+## 🏃‍♂️ Usage
+
+### Development Mode
+
+1. **Start the development servers**:
+   ```bash
+   # In the project root directory
+   python run_dev.py
+   ```
+   This will start:
+   - Frontend at http://localhost:5173
+   - Backend API at http://localhost:8000
+   - API Docs at http://localhost:8000/api/docs
+
+### Production Build
+
+1. **Build the frontend**:
+   ```bash
+   cd frontend
+   npm run build
+   cd ..
+   ```
+
+2. **Start the production server**:
+   ```bash
+   uvicorn app:app --host 0.0.0.0 --port 8000
+   ```
+   The application will be available at http://localhost:8000
+
+### Command Line (Direct API)
+
+```bash
+python app.py --input "Hello world" --output output/video.mp4
 ```
 
 ## 🔧 Configuration
@@ -179,10 +363,10 @@ models:
   sadtalker:
     checkpoint: "models/sadtalker/checkpoints"
     config: "models/sadtalker/configs"
-  
+
   wav2lip:
     checkpoint: "models/wav2lip/checkpoints"
-  
+
   qwen:
     model_name: "Qwen/Qwen-7B-Chat"
 
@@ -228,6 +412,50 @@ Distributed under the MIT License. See `LICENSE` for more information.
 ## 📚 Documentation
 
 For detailed documentation, please visit our [Documentation](https://paksatalker.readthedocs.io/).
+
+### Project Structure
+
+```
+paksatalker/
+├── frontend/           # React + TypeScript frontend
+│   ├── src/            # Source files
+│   ├── public/         # Static files
+│   └── package.json    # Frontend dependencies
+├── api/                # API endpoints
+├── config/             # Configuration files
+├── models/             # AI models
+├── static/             # Static files (served by FastAPI)
+├── app.py              # Main application entry point
+├── requirements.txt    # Python dependencies
+└── README.md           # This file
+```
+
+### Environment Variables
+
+Create a `.env` file in the project root with the following variables:
+
+```env
+# Backend
+DEBUG=True
+PORT=8000
+
+# Database
+DATABASE_URL=sqlite:///./paksatalker.db
+
+# JWT
+SECRET_KEY=your-secret-key
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+```
+
+For development, you can also create a `.env.development` file in the `frontend` directory.
+
+### API Documentation
+
+Once the server is running, visit `/api/docs` for interactive API documentation (Swagger UI).
+
+For detailed documentation, please visit our [documentation website](https://paksatalker.readthedocs.io).
+
 
 ## 📧 Contact
 
