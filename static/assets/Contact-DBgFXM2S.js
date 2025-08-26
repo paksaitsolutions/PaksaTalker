@@ -1,1 +1,0 @@
-import{j as t}from"./index-CDh05IH4.js";import"./react-BqtwO2EB.js";const e=()=>t.jsxs("div",{children:[t.jsx("h1",{children:"Contact"}),t.jsx("p",{children:"This is the contact page."})]});export{e as default};

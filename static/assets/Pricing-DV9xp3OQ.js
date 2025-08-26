@@ -1,1 +1,0 @@
-import{j as i}from"./index-CDh05IH4.js";import"./react-BqtwO2EB.js";const e=()=>i.jsxs("div",{children:[i.jsx("h1",{children:"Pricing"}),i.jsx("p",{children:"This is the pricing page."})]});export{e as default};
