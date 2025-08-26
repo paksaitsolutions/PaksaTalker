@@ -1,19 +1,33 @@
 '''SadTalker model implementation for PaksaTalker.'''
 import os
+import time
 import torch
 import numpy as np
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List, Tuple
 from pathlib import Path
 import cv2
+from dataclasses import dataclass, field
+from enum import Enum, auto
 
 from .base import BaseModel
 from config import config
 
 class SadTalkerModel(BaseModel):
-    """SadTalker model for generating talking head videos."""
+    """SadTalker model for generating talking head videos with emotion control."""
+    
+    # Supported emotion types and their corresponding expression codes
+    EMOTION_MAP = {
+        'neutral': 0,
+        'happy': 1,
+        'sad': 2,
+        'angry': 3,
+        'surprised': 4,
+        'disgusted': 5,
+        'fearful': 6
+    }
     
     def __init__(self, device: Optional[str] = None):
-        """Initialize the SadTalker model.
+        """Initialize the SadTalker model with emotion control.
         
         Args:
             device: Device to run the model on ('cuda', 'mps', 'cpu').
@@ -21,6 +35,172 @@ class SadTalkerModel(BaseModel):
         super().__init__(device)
         self.model = None
         self.initialized = False
+        
+        # Emotion control state
+        self.current_emotion = 'neutral'
+        self.target_emotion = 'neutral'
+        self.emotion_intensity = 1.0
+        self.emotion_blend = {}
+        self.transition_speed = 0.1  # Default transition speed (0-1)
+        self._init_emotion_weights()
+        
+        # For smooth transitions
+        self._transition_start_time = None
+        self._transition_duration = 0.5  # seconds
+        self._start_blend = None
+        self._target_blend = None
+        
+    def _init_emotion_weights(self) -> None:
+        """Initialize emotion blending weights."""
+        self.emotion_blend = {emotion: 0.0 for emotion in self.EMOTION_MAP}
+        self.emotion_blend['neutral'] = 1.0  # Start with neutral expression
+    
+    def set_emotion(self, emotion: str, intensity: float = 1.0) -> None:
+        """Set the primary emotion and its intensity.
+        
+        Args:
+            emotion: Name of the emotion (must be in EMOTION_MAP).
+            intensity: Intensity of the emotion (0.0 to 1.0).
+        """
+        if emotion not in self.EMOTION_MAP:
+            raise ValueError(f"Unsupported emotion: {emotion}. Must be one of {list(self.EMOTION_MAP.keys())}")
+            
+        intensity = max(0.0, min(1.0, intensity))  # Clamp between 0 and 1
+        self.current_emotion = emotion
+        self.emotion_intensity = intensity
+        self._update_emotion_blend()
+    
+    def blend_emotions(self, emotion_weights: Dict[str, float]) -> None:
+        """Blend multiple emotions with custom weights.
+        
+        Args:
+            emotion_weights: Dictionary mapping emotions to their weights (0.0 to 1.0).
+        """
+        # Normalize weights to sum to 1.0
+        total = sum(emotion_weights.values())
+        if total <= 0:
+            raise ValueError("Sum of emotion weights must be greater than 0")
+            
+        for emotion in self.EMOTION_MAP:
+            self.emotion_blend[emotion] = emotion_weights.get(emotion, 0.0) / total
+    
+    def _update_emotion_blend(self) -> None:
+        """Update emotion blend based on current emotion and intensity."""
+        # Reset all weights
+        for emotion in self.EMOTION_MAP:
+            self.emotion_blend[emotion] = 0.0
+        
+        # Set the current emotion with intensity
+        self.emotion_blend[self.current_emotion] = self.emotion_intensity
+        
+        # If not full intensity, blend with neutral
+        if self.emotion_intensity < 1.0:
+            self.emotion_blend['neutral'] = 1.0 - self.emotion_intensity
+    
+    def start_emotion_transition(self, target_emotion: str, duration: float = 0.5) -> None:
+        """Start a smooth transition to a new emotion.
+        
+        Args:
+            target_emotion: The emotion to transition to.
+            duration: Duration of the transition in seconds.
+        """
+        if target_emotion not in self.EMOTION_MAP:
+            raise ValueError(f"Unsupported emotion: {target_emotion}")
+            
+        self.target_emotion = target_emotion
+        self._transition_duration = max(0.1, duration)
+        self._transition_start_time = time.time()
+        self._start_blend = self.emotion_blend.copy()
+        
+        # Initialize target blend
+        self._target_blend = {emotion: 0.0 for emotion in self.EMOTION_MAP}
+        self._target_blend[target_emotion] = self.emotion_intensity
+        if self.emotion_intensity < 1.0:
+            self._target_blend['neutral'] = 1.0 - self.emotion_intensity
+    
+    def update_emotion_transition(self) -> bool:
+        """Update the current emotion blend based on transition progress.
+        
+        Returns:
+            bool: True if transition is still in progress, False if complete.
+        """
+        if self._transition_start_time is None or self._start_blend is None or self._target_blend is None:
+            return False
+            
+        elapsed = time.time() - self._transition_start_time
+        t = min(1.0, elapsed / self._transition_duration)
+        
+        # Apply smooth step for more natural transitions
+        t = t * t * (3 - 2 * t)
+        
+        # Interpolate between start and target blends
+        for emotion in self.EMOTION_MAP:
+            self.emotion_blend[emotion] = (
+                self._start_blend[emotion] * (1 - t) + 
+                self._target_blend[emotion] * t
+            )
+        
+        # Update current emotion if transition is complete
+        if t >= 1.0:
+            self.current_emotion = self.target_emotion
+            self._transition_start_time = None
+            self._start_blend = None
+            self._target_blend = None
+            return False
+            
+        return True
+    
+    def get_expression_coefficients(self, audio_features: torch.Tensor, delta_time: float = 0.0) -> torch.Tensor:
+        """Generate expression coefficients with emotion control and transitions.
+        
+        Args:
+            audio_features: Raw audio features from the audio processing pipeline.
+            delta_time: Time since last update (for smooth transitions).
+            
+        Returns:
+            torch.Tensor: Expression coefficients with emotion modulation.
+        """
+        if not self.initialized:
+            raise RuntimeError("Model not initialized. Call load_model() first.")
+        
+        # Update emotion transition if active
+        if self._transition_start_time is not None:
+            self.update_emotion_transition()
+            
+        # Get base expression from audio
+        base_exp = self.model['audio2exp'](audio_features)
+        
+        # Get current emotion blend
+        current_blend = self._get_current_emotion_blend()
+        
+        # Apply emotion modulation
+        emotion_weights = torch.tensor([
+            current_blend[emotion] 
+            for emotion in sorted(self.EMOTION_MAP.keys())
+        ], device=self.device)
+        
+        # Blend base expression with emotion weights
+        # Using a more sophisticated blending function that preserves speech dynamics
+        emotion_scale = 0.8  # How much emotion affects the expression (0-1)
+        modulated_exp = base_exp * (1.0 + (emotion_weights.unsqueeze(0) - 0.5) * emotion_scale * 2)
+        
+        return modulated_exp
+    
+    def _get_current_emotion_blend(self) -> Dict[str, float]:
+        """Get the current emotion blend, ensuring it's normalized."""
+        total = sum(self.emotion_blend.values())
+        if total <= 0:
+            return {emotion: 1.0 / len(self.EMOTION_MAP) for emotion in self.EMOTION_MAP}
+        return {emotion: weight / total for emotion, weight in self.emotion_blend.items()}
+    
+    def set_emotion_intensity(self, intensity: float) -> None:
+        """Set the intensity of the current emotion.
+        
+        Args:
+            intensity: New intensity value (0.0 to 1.0).
+        """
+        self.emotion_intensity = max(0.0, min(1.0, intensity))
+        self._update_emotion_blend()
     
     def load_model(self, model_path: Optional[str] = None, **kwargs) -> None:
         """Load the SadTalker model.
