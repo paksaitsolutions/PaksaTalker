@@ -32,6 +32,7 @@ PaksaTalker is an enterprise-grade AI framework for generating hyper-realistic t
 ### Prerequisites
 
 - Python 3.8+
+- Node.js 16+ and npm 8+
 - CUDA 11.3+ (for GPU acceleration)
 - ffmpeg 4.4+
 - 8GB+ VRAM recommended
@@ -44,17 +45,24 @@ PaksaTalker is an enterprise-grade AI framework for generating hyper-realistic t
    cd paksatalker
    ```
 
-2. **Set up environment**:
+2. **Set up backend environment**:
    ```bash
    # Create and activate virtual environment
    python -m venv venv
-   source venv/bin/activate  # Linux/Mac
-   .\venv\Scripts\activate  # Windows
+   # On Windows:
+   .\venv\Scripts\activate
+   # On macOS/Linux:
+   # source venv/bin/activate
+
+   # Install Python dependencies
+   pip install -r requirements.txt
    ```
 
-3. **Install dependencies**:
+3. **Set up frontend**:
    ```bash
-   pip install -r requirements.txt
+   cd frontend
+   npm install
+   cd ..
    ```
 
 4. **Download pre-trained models**:
@@ -122,51 +130,56 @@ result = pt.generate(
 )
 ```
 
+## 🏃‍♂️ Usage
+
+### Development Mode
+
+1. **Start the development servers**:
+   ```bash
+   # In the project root directory
+   python run_dev.py
+   ```
+   This will start:
+   - Frontend at http://localhost:5173
+   - Backend API at http://localhost:8000
+   - API Docs at http://localhost:8000/api/docs
+
+### Production Build
+
+1. **Build the frontend**:
+   ```bash
+   cd frontend
+   npm run build
+   cd ..
+   ```
+
+2. **Start the production server**:
+   ```bash
+   uvicorn app:app --host 0.0.0.0 --port 8000
+   ```
+   The application will be available at http://localhost:8000
+
+### Command Line (Direct API)
+
+```bash
+python app.py --input "Hello world" --output output/video.mp4
+```
+
 ## 🏗️ Architecture
 
 ```
-PaksaTalker/
-├── api/                  # REST API endpoints
-│   ├── routes/          # API route definitions
-│   ├── schemas/         # Pydantic models
-│   └── utils/           # API utilities
-│
-├── config/              # Configuration management
-│   ├── __init__.py
-│   └── config.py
-│
-├── core/                # Core functionality
-│   ├── engine.py       # Main processing pipeline
-│   ├── video.py        # Video processing
-│   └── audio.py        # Audio processing
-│
-├── integrations/        # Model integrations
-│   ├── sadtalker/      # SadTalker implementation
-│   ├── wav2lip/        # Wav2Lip integration
-│   ├── qwen/           # Qwen language model
-│   └── gesture/        # Gesture generation
-│
-├── models/             # Model architectures
-│   ├── base.py         # Base model interface
-│   └── registry.py     # Model registry
-│
-├── static/             # Static files
-│   ├── css/
-│   ├── js/
-│   └── templates/
-│
-├── tests/              # Test suite
-│   ├── unit/
-│   └── integration/
-│
-├── utils/              # Utility functions
-│   ├── audio_utils.py
-│   ├── video_utils.py
-│   └── face_utils.py
-│
-├── app.py              # Main application
-├── cli.py              # Command-line interface
-└── requirements.txt    # Dependencies
+paksatalker/
+├── frontend/           # React + TypeScript frontend
+│   ├── src/            # Source files
+│   ├── public/         # Static files
+│   └── package.json    # Frontend dependencies
+├── api/                # API endpoints
+├── config/             # Configuration files
+├── models/             # AI models
+├── static/             # Static files (served by FastAPI)
+├── app.py              # Main application entry point
+├── requirements.txt    # Python dependencies
+└── README.md           # This file
 ```
 
 ## 🔧 Configuration
@@ -179,10 +192,10 @@ models:
   sadtalker:
     checkpoint: "models/sadtalker/checkpoints"
     config: "models/sadtalker/configs"
-  
+
   wav2lip:
     checkpoint: "models/wav2lip/checkpoints"
-  
+
   qwen:
     model_name: "Qwen/Qwen-7B-Chat"
 
@@ -227,7 +240,48 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ## 📚 Documentation
 
-For detailed documentation, please visit our [Documentation](https://paksatalker.readthedocs.io/).
+### Project Structure
+
+```
+paksatalker/
+├── frontend/           # React + TypeScript frontend
+│   ├── src/            # Source files
+│   ├── public/         # Static files
+│   └── package.json    # Frontend dependencies
+├── api/                # API endpoints
+├── config/             # Configuration files
+├── models/             # AI models
+├── static/             # Static files (served by FastAPI)
+├── app.py              # Main application entry point
+├── requirements.txt    # Python dependencies
+└── README.md           # This file
+```
+
+### Environment Variables
+
+Create a `.env` file in the project root with the following variables:
+
+```env
+# Backend
+DEBUG=True
+PORT=8000
+
+# Database
+DATABASE_URL=sqlite:///./paksatalker.db
+
+# JWT
+SECRET_KEY=your-secret-key
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+```
+
+For development, you can also create a `.env.development` file in the `frontend` directory.
+
+### API Documentation
+
+Once the server is running, visit `/api/docs` for interactive API documentation (Swagger UI).
+
+For detailed documentation, please visit our [documentation website](https://paksatalker.readthedocs.io).
 
 ## 📧 Contact
 

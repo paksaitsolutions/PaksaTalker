@@ -1,4 +1,4 @@
-""Gesture Generator integration for PaksaTalker"""
+"""Gesture Generator integration for PaksaTalker"""
 import os
 import torch
 import numpy as np

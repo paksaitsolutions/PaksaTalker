@@ -1,4 +1,4 @@
-""SadTalker integration for PaksaTalker"""
+"""SadTalker integration for PaksaTalker"""
 import os
 import torch
 import numpy as np

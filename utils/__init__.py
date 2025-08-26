@@ -1,4 +1,4 @@
-""PaksaTalker utility modules."""
+'''PaksaTalker utility modules.'''
 
 from . import audio_utils
 from . import video_utils

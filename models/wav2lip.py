@@ -1,4 +1,4 @@
-""Wav2Lip model implementation for PaksaTalker."""
+'''Wav2Lip model implementation for PaksaTalker.'''
 import os
 import torch
 import numpy as np

@@ -1,0 +1,71 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+
+# Local development
+.env
+.env.*
+!.env.example
+
+# Build and distribution
+dist/
+build/
+*.egg-info/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Output directories
+output/
+temp/
+
+# Model weights (if not needed in the image)
+models/
+!models/__init__.py
+
+# Large files
+*.pt
+*.pth
+*.bin
+*.onnx
+*.h5
+*.tflite
+*.zip
+*.tar.gz
+*.7z
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

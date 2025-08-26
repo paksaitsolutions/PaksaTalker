@@ -1,0 +1,1 @@
+import{j as s}from"./index-CDh05IH4.js";import"./react-BqtwO2EB.js";const d=()=>s.jsxs("div",{children:[s.jsx("h1",{children:"Dashboard"}),s.jsx("p",{children:"This is the dashboard page."})]});export{d as default};

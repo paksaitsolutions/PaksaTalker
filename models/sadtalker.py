@@ -1,4 +1,4 @@
-""SadTalker model implementation for PaksaTalker."""
+'''SadTalker model implementation for PaksaTalker.'''
 import os
 import torch
 import numpy as np

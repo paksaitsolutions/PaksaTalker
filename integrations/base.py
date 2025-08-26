@@ -1,4 +1,4 @@
-""Base integration class for PaksaTalker components"""
+"""Base integration class for PaksaTalker components"""
 from abc import ABC, abstractmethod
 import torch
 from typing import Any, Dict, Optional

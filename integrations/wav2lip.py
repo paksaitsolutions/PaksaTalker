@@ -1,4 +1,4 @@
-""Wav2Lip integration for PaksaTalker"""
+"""Wav2Lip integration for PaksaTalker"""
 import os
 import torch
 import numpy as np

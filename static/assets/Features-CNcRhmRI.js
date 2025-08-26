@@ -1,0 +1,1 @@
+import{j as e}from"./index-CDh05IH4.js";import"./react-BqtwO2EB.js";const t=()=>e.jsxs("div",{children:[e.jsx("h1",{children:"Features"}),e.jsx("p",{children:"This is the features page."})]});export{t as default};

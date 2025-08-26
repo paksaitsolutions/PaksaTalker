@@ -1,4 +1,4 @@
-""PaksaTalker configuration package."""
+"""PaksaTalker configuration package."""
 from .config import Config
 
 # Initialize default configuration

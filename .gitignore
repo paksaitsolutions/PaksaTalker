@@ -194,3 +194,9 @@ cython_debug/
 
 # Local development directories
 awesome-gesture_generation/
+frontend/.env.development
+frontend/.env.production
+frontend/.env.local
+*.env
+.env.development.local
+.env.development
