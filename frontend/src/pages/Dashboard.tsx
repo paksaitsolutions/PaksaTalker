@@ -24,7 +24,9 @@ const Dashboard = () => {
           {/* Example Dashboard Item */}
           <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow duration-300">
             <h3 className="text-lg font-medium text-gray-900">Account Information</h3>
-            <p className="mt-2 text-gray-500">Update your profile and manage your account settings.</p>
+            <p className="mt-2 text-gray-500">
+              Update your profile and manage your account settings.
+            </p>
             <a href="#" className="mt-4 inline-block text-blue-600 hover:text-blue-800">
               Edit Profile
             </a>
@@ -33,12 +35,14 @@ const Dashboard = () => {
           {/* Example Dashboard Item */}
           <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow duration-300">
             <h3 className="text-lg font-medium text-gray-900">Explore New Features</h3>
-            <p className="mt-2 text-gray-500">Discover the latest features and tools available on PaksaTalker.</p>
+            <p className="mt-2 text-gray-500">
+              Discover the latest features and tools available on PaksaTalker.
+            </p>
             <a href="#" className="mt-4 inline-block text-blue-600 hover:text-blue-800">
               Learn More
             </a>
           </div>
-          
+
           {/* Link to Video Generation */}
           <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow duration-300">
             <h3 className="text-lg font-medium text-gray-900">Generate Video</h3>

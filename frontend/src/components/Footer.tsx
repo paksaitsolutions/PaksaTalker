@@ -4,7 +4,7 @@ import { Facebook, Twitter, Instagram, Linkedin, Github } from 'lucide-react';
 
 const Footer: React.FC = () => {
   const currentYear = new Date().getFullYear();
-  
+
   const socialLinks = [
     { icon: <Facebook className="h-5 w-5" />, url: 'https://facebook.com/paksatalker' },
     { icon: <Twitter className="h-5 w-5" />, url: 'https://twitter.com/paksatalker' },

@@ -1,5 +1,9 @@
 import React from 'react';
-import { CheckCircleIcon, CloudArrowUpIcon, CodeBracketSquareIcon } from '@heroicons/react/20/solid';
+import {
+  CheckCircleIcon,
+  CloudArrowUpIcon,
+  CodeBracketSquareIcon,
+} from '@heroicons/react/20/solid';
 
 const Features = () => {
   return (
@@ -16,19 +20,25 @@ const Features = () => {
           <div className="bg-gray-50 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300">
             <CheckCircleIcon className="h-6 w-6 text-green-500 mb-2" aria-hidden="true" />
             <h3 className="text-lg font-medium text-gray-900">AI-Powered Video Generation</h3>
-            <p className="mt-2 text-gray-500">Create stunning videos with AI in minutes, not hours.</p>
+            <p className="mt-2 text-gray-500">
+              Create stunning videos with AI in minutes, not hours.
+            </p>
           </div>
 
           <div className="bg-gray-50 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300">
             <CloudArrowUpIcon className="h-6 w-6 text-green-500 mb-2" aria-hidden="true" />
             <h3 className="text-lg font-medium text-gray-900">Realistic Avatars</h3>
-            <p className="mt-2 text-gray-500">Choose from a variety of realistic AI avatars or create your own.</p>
+            <p className="mt-2 text-gray-500">
+              Choose from a variety of realistic AI avatars or create your own.
+            </p>
           </div>
 
           <div className="bg-gray-50 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300">
             <CodeBracketSquareIcon className="h-6 w-6 text-green-500 mb-2" aria-hidden="true" />
             <h3 className="text-lg font-medium text-gray-900">Multi-Language Support</h3>
-            <p className="mt-2 text-gray-500">Generate videos in multiple languages with perfect lip-sync.</p>
+            <p className="mt-2 text-gray-500">
+              Generate videos in multiple languages with perfect lip-sync.
+            </p>
           </div>
 
           <div className="bg-gray-50 p-6 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300">

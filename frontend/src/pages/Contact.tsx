@@ -8,14 +8,15 @@ const Contact = () => {
           <h2 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
             Contact Us
           </h2>
-          <p className="mt-2 text-lg leading-8 text-gray-600">
-            We’d love to hear from you! Get in touch using the form below.
-          </p>
+          <p className="mt-3 text-sm leading-6 text-gray-600">We&apos;d love to hear from you. Please fill out the form below and we&apos;ll get back to you as soon as possible.</p>
         </div>
         <form action="#" method="POST" className="mx-auto mt-16 max-w-xl sm:mt-20">
           <div className="grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-2">
             <div>
-              <label htmlFor="first-name" className="block text-sm font-semibold leading-6 text-gray-900">
+              <label
+                htmlFor="first-name"
+                className="block text-sm font-semibold leading-6 text-gray-900"
+              >
                 First name
               </label>
               <div className="mt-2.5">
@@ -29,7 +30,10 @@ const Contact = () => {
               </div>
             </div>
             <div>
-              <label htmlFor="last-name" className="block text-sm font-semibold leading-6 text-gray-900">
+              <label
+                htmlFor="last-name"
+                className="block text-sm font-semibold leading-6 text-gray-900"
+              >
                 Last name
               </label>
               <div className="mt-2.5">
@@ -43,7 +47,10 @@ const Contact = () => {
               </div>
             </div>
             <div className="sm:col-span-2">
-              <label htmlFor="email" className="block text-sm font-semibold leading-6 text-gray-900">
+              <label
+                htmlFor="email"
+                className="block text-sm font-semibold leading-6 text-gray-900"
+              >
                 Email
               </label>
               <div className="mt-2.5">
@@ -57,7 +64,10 @@ const Contact = () => {
               </div>
             </div>
             <div className="sm:col-span-2">
-              <label htmlFor="phone-number" className="block text-sm font-semibold leading-6 text-gray-900">
+              <label
+                htmlFor="phone-number"
+                className="block text-sm font-semibold leading-6 text-gray-900"
+              >
                 Phone number
               </label>
               <div className="relative mt-2.5">
@@ -98,7 +108,10 @@ const Contact = () => {
               </div>
             </div>
             <div className="sm:col-span-2">
-              <label htmlFor="message" className="block text-sm font-semibold leading-6 text-gray-900">
+              <label
+                htmlFor="message"
+                className="block text-sm font-semibold leading-6 text-gray-900"
+              >
                 Message
               </label>
               <div className="mt-2.5">
