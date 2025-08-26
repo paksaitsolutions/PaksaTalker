@@ -5,8 +5,8 @@ from typing import Optional, Dict, Any, List, Union
 import json
 from pathlib import Path
 
-from .base import BaseIntegration
-from ...config import config
+from integrations.base import BaseIntegration
+from config import config
 
 # Import Qwen with error handling
 try:

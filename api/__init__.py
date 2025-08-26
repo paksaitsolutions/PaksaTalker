@@ -1,4 +1,4 @@
-""PaksaTalker API package."""
+"""PaksaTalker API package."""
 from fastapi import APIRouter
 from . import routes
 

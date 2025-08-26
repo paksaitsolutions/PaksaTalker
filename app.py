@@ -38,7 +38,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp, Scope, Receive, Send
 
 from config import config
-from api.schemas import (
+from api.schemas.base import (
     APIStatus,
     ErrorResponse,
     TokenResponse,

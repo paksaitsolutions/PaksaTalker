@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 
 from .base import BaseIntegration
-from ...config import config
+from config import config
 
 # Import Wav2Lip with error handling
 try:

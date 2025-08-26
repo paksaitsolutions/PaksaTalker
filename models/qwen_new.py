@@ -1,6 +1,7 @@
-""""Qwen language model implementation for PaksaTalker."""
+"""Qwen language model implementation for PaksaTalker."""
 import os
 import torch
+import json
 from typing import Optional, Dict, Any, List, Union
 from pathlib import Path
 
@@ -23,50 +24,41 @@ class QwenModel(BaseModel):
         self.tokenizer = None
         self.initialized = False
     
-    def load_model(
-        self, 
-        model_name: Optional[str] = None,
-        **kwargs
-    ) -> None:
-        """Load the Qwen language model.
+    def load_model(self, model_name: Optional[str] = None, **kwargs) -> None:
+        """Load the Qwen model.
         
         Args:
-            model_name: Name or path of the Qwen model to load.
+            model_name: Name or path of the model to load.
             **kwargs: Additional arguments for model loading.
         """
         if self.initialized:
             return
             
         try:
-            # Initialize paths and model name
-            model_name = model_name or config.get('models.qwen.model_name', 'Qwen/Qwen2.5-Omni-7B')
+            model_name = model_name or config.get('models.qwen.model_name', 'Qwen/Qwen-7B-Chat')
             
-            # Set up device map
+            # Set up device
             device_map = "auto"
             if self.device == "cuda" and torch.cuda.is_available():
                 device_map = "cuda"
             elif self.device == "mps" and torch.backends.mps.is_available():
                 device_map = "mps"
-            
-            # Load tokenizer
+                
+            # Load tokenizer and model
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_name,
                 trust_remote_code=True,
                 **kwargs.get('tokenizer_kwargs', {})
             )
             
-            # Load model
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 device_map=device_map,
                 trust_remote_code=True,
-                **{
-                    'torch_dtype': torch.float16 if 'cuda' in device_map else torch.float32,
-                    **kwargs.get('model_kwargs', {})
-                }
+                torch_dtype=torch.float16 if 'cuda' in device_map else torch.float32,
+                **kwargs.get('model_kwargs', {})
             )
             
-            # Set generation config
             self.model.generation_config = GenerationConfig.from_pretrained(
                 model_name,
                 trust_remote_code=True
@@ -102,19 +94,16 @@ class QwenModel(BaseModel):
             self.load_model()
         
         try:
-            # Encode the prompt
             inputs = self.tokenizer(
                 prompt,
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=2048  # Adjust based on model's max length
+                max_length=2048
             )
             
-            # Move inputs to the same device as model
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
             
-            # Generate response
             with torch.no_grad():
                 outputs = self.model.generate(
                     **inputs,
@@ -126,7 +115,6 @@ class QwenModel(BaseModel):
                     **kwargs
                 )
             
-            # Decode and return the generated text
             response = self.tokenizer.decode(
                 outputs[0][inputs['input_ids'].shape[1]:],
                 skip_special_tokens=True
@@ -136,37 +124,6 @@ class QwenModel(BaseModel):
             
         except Exception as e:
             raise RuntimeError(f"Text generation failed: {e}")
-    
-    def enhance_prompt(
-        self,
-        original_prompt: str,
-        style: str = "professional",
-        **kwargs
-    ) -> str:
-        """Enhance a prompt with more detail and clarity.
-        
-        Args:
-            original_prompt: The original user prompt.
-            style: Desired style for enhancement (e.g., 'professional', 'casual', 'detailed').
-            **kwargs: Additional parameters for generation.
-            
-        Returns:
-            Enhanced prompt text.
-        """
-        enhancement_instruction = {
-            "professional": "Enhance the following prompt to be more professional and detailed: ",
-            "casual": "Make this prompt more conversational and friendly: ",
-            "detailed": "Add more specific details and context to this prompt: "
-        }.get(style.lower(), "Improve this prompt: ")
-        
-        enhanced_prompt = self.generate(
-            f"{enhancement_instruction}{original_prompt}",
-            max_length=300,
-            temperature=0.7,
-            **kwargs
-        )
-        
-        return enhanced_prompt
     
     def analyze_video_requirements(
         self,
@@ -197,7 +154,7 @@ class QwenModel(BaseModel):
         
         try:
             response = self.generate(
-                analysis_prompt,
+                analysis_prompt.format(prompt=prompt),
                 max_length=512,
                 temperature=0.3,
                 **kwargs
@@ -210,7 +167,6 @@ class QwenModel(BaseModel):
             elif response.startswith('```'):
                 response = response[response.find('{'):response.rfind('}')+1]
             
-            import json
             return json.loads(response)
             
         except Exception as e:
