@@ -10,6 +10,22 @@ env/
 .env.test.local
 .env.production.local
 
+# Frontend environment files
+frontend/.env
+frontend/.env.*
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/out/
+frontend/.nuxt/
+frontend/.cache/
+frontend/.vscode/
+frontend/.idea/
+frontend/.sass-cache/
+frontend/coverage/
+frontend/.DS_Store
+frontend/Thumbs.db
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
