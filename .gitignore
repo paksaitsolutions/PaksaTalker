@@ -216,3 +216,16 @@ frontend/.env.local
 *.env
 .env.development.local
 .env.development
+# Node modules
+node_modules/
+frontend/node_modules/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Model files
+models/**/*.pth
+models/**/*.pth.tar
+models/**/*.dat

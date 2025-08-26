@@ -182,11 +182,11 @@ CUDA_VISIBLE_DEVICES=0 uvicorn app:app --reload
   - [x] Basic expression mapping
 
 #### Emotion Control
-- [ ] Advanced emotion control
-  - [ ] Implement emotion intensity scaling (0-1)
-  - [ ] Support for basic emotions (happy, sad, angry, surprised, neutral)
-  - [ ] Blending between emotions
-  - [ ] Emotion transition smoothing
+- [x] Advanced emotion control
+  - [x] Implement emotion intensity scaling (0-1)
+  - [x] Support for basic emotions (happy, sad, angry, surprised, neutral, disgusted, fearful)
+  - [x] Blending between emotions
+  - [x] Emotion transition smoothing with configurable duration
 
 #### Multi-Speaker Support
 - [ ] Multi-speaker adaptation
