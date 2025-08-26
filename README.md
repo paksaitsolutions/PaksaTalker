@@ -4,11 +4,33 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
+PaksaTalker is an enterprise-grade AI framework for generating hyper-realistic talking head videos with perfect lip-sync, natural facial expressions, and life-like gestures. Built on cutting-edge AI research, it seamlessly integrates multiple state-of-the-art models to deliver production-ready video synthesis.
+
 PaksaTalker is an advanced AI-powered platform that creates hyper-realistic talking avatars with synchronized facial expressions and natural body gestures. The system combines multiple state-of-the-art AI models including Qwen for language processing, SadTalker for facial animation, and PantoMatrix/EMAGE for full-body gesture generation, delivering production-ready video synthesis with unprecedented realism.
+
 
 ## 🌟 Key Features
 
 ### 🎭 Natural Animation
+
+- **Precise Lip-Sync**: Frame-accurate audio-visual synchronization
+- **Expressive Faces**: Emotionally aware facial animations
+- **Natural Gestures**: Context-appropriate head movements and expressions
+- **High Fidelity**: 4K resolution support with minimal artifacts
+
+### 🛠️ Technical Capabilities
+- Multi-model architecture (SadTalker, Wav2Lip, Qwen)
+- GPU-accelerated processing
+- Batch processing support
+- Real-time preview
+- RESTful API for easy integration
+
+### 🧩 Extensible Architecture
+- Modular design for easy model swapping
+- Plugin system for custom integrations
+- Support for custom voice models
+- Multi-language support
+
 - **Precise Lip-Sync**: Frame-accurate audio-visual synchronization using SadTalker
 - **Expressive Faces**: Emotionally aware facial animations with micro-expressions
 - **Full-Body Gestures**: Context-appropriate body language and hand movements
@@ -28,9 +50,15 @@ PaksaTalker is an advanced AI-powered platform that creates hyper-realistic talk
 - **Multi-Language**: Support for multiple languages and accents
 - **Customization**: Fine-tune animation styles and rendering parameters
 
+
 ## 🚀 Getting Started
 
 ### Prerequisites
+
+- Python 3.8+
+- CUDA 11.3+ (for GPU acceleration)
+- ffmpeg 4.4+
+- 8GB+ VRAM recommended
 
 - **Python 3.9+** with pip
 - **Node.js 16+** and npm 8+ (for web interface)
@@ -38,6 +66,7 @@ PaksaTalker is an advanced AI-powered platform that creates hyper-realistic talk
 - **ffmpeg 4.4+** for video processing
 - **NVIDIA GPU** with 16GB+ VRAM recommended
 - **Docker** (optional, for containerized deployment
+
 
 ### Installation
 
@@ -78,9 +107,38 @@ PaksaTalker is an advanced AI-powered platform that creates hyper-realistic talk
    npm install
    npm run build
    cd ..
+
    ```
 
 ## 🖥️ Quick Start
+
+
+### Command Line Interface
+
+```bash
+# Basic usage
+python -m PaksaTalker.cli \
+    --image input/face.jpg \
+    --audio input/speech.wav \
+    --output output/result.mp4 \
+    --enhance_face True \
+    --expression_intensity 0.8
+
+# Advanced options
+python -m PaksaTalker.cli \
+    --image input/face.jpg \
+    --audio input/speech.wav \
+    --output output/result.mp4 \
+    --resolution 1080 \
+    --fps 30 \
+    --background blur \
+    --gesture_level medium
+```
+
+### Python API
+
+```python
+from PaksaTalker import PaksaTalker
 
 ### Generate a Talking Avatar from Text
 
@@ -181,6 +239,7 @@ video = renderer.combine(
     output_path="output/demo.mp4"
 )
 ```
+
 from pathlib import Path
 
 # Initialize with custom settings
@@ -212,6 +271,52 @@ result = pt.generate(
     }
 )
 ```
+
+## 🏗️ Architecture
+
+```
+PaksaTalker/
+├── api/                  # REST API endpoints
+│   ├── routes/          # API route definitions
+│   ├── schemas/         # Pydantic models
+│   └── utils/           # API utilities
+│
+├── config/              # Configuration management
+│   ├── __init__.py
+│   └── config.py
+│
+├── core/                # Core functionality
+│   ├── engine.py       # Main processing pipeline
+│   ├── video.py        # Video processing
+│   └── audio.py        # Audio processing
+│
+├── integrations/        # Model integrations
+│   ├── sadtalker/      # SadTalker implementation
+│   ├── wav2lip/        # Wav2Lip integration
+│   ├── qwen/           # Qwen language model
+│   └── gesture/        # Gesture generation
+│
+├── models/             # Model architectures
+│   ├── base.py         # Base model interface
+│   └── registry.py     # Model registry
+│
+├── static/             # Static files
+│   ├── css/
+│   ├── js/
+│   └── templates/
+│
+├── tests/              # Test suite
+│   ├── unit/
+│   └── integration/
+│
+├── utils/              # Utility functions
+│   ├── audio_utils.py
+│   ├── video_utils.py
+│   └── face_utils.py
+│
+├── app.py              # Main application
+├── cli.py              # Command-line interface
+└── requirements.txt    # Dependencies
 
 ## 🏃‍♂️ Usage
 
@@ -246,23 +351,6 @@ result = pt.generate(
 
 ```bash
 python app.py --input "Hello world" --output output/video.mp4
-```
-
-## 🏗️ Architecture
-
-```
-paksatalker/
-├── frontend/           # React + TypeScript frontend
-│   ├── src/            # Source files
-│   ├── public/         # Static files
-│   └── package.json    # Frontend dependencies
-├── api/                # API endpoints
-├── config/             # Configuration files
-├── models/             # AI models
-├── static/             # Static files (served by FastAPI)
-├── app.py              # Main application entry point
-├── requirements.txt    # Python dependencies
-└── README.md           # This file
 ```
 
 ## 🔧 Configuration
@@ -323,6 +411,8 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ## 📚 Documentation
 
+For detailed documentation, please visit our [Documentation](https://paksatalker.readthedocs.io/).
+
 ### Project Structure
 
 ```
@@ -365,6 +455,7 @@ For development, you can also create a `.env.development` file in the `frontend`
 Once the server is running, visit `/api/docs` for interactive API documentation (Swagger UI).
 
 For detailed documentation, please visit our [documentation website](https://paksatalker.readthedocs.io).
+
 
 ## 📧 Contact
 
