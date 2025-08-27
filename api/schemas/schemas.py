@@ -30,7 +30,7 @@ class EmotionType(str, Enum):
 class UserCreate(BaseModel):
     """Schema for user registration."""
     username: str = Field(..., min_length=3, max_length=50, example="johndoe")
-    email: str = Field(..., regex=r"^[a-zA-Z0-9+_.-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+    email: str = Field(..., pattern=r"^[a-zA-Z0-9+_.-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
     password: str = Field(..., min_length=8, example="securepassword123")
     full_name: Optional[str] = Field(None, example="John Doe")
 
@@ -56,7 +56,7 @@ class VideoGenerationRequest(BaseModel):
     )
     resolution: str = Field(
         "512x512",
-        regex=r"^\d+x\d+$",
+        pattern=r"^\d+x\d+$",
         description="Output resolution in WxH format"
     )
 
@@ -97,6 +97,16 @@ class ModelAdaptationRequest(BaseModel):
     learning_rate: float = Field(1e-4, gt=0, description="Learning rate for adaptation")
     batch_size: int = Field(4, ge=1, description="Batch size for training")
 
+
+class AdaptationStatusResponse(BaseModel):
+    """Schema for model adaptation status response."""
+    task_id: str = Field(..., description="Unique identifier for the adaptation task")
+    status: str = Field(..., description="Current status of the adaptation task")
+    progress: float = Field(0.0, ge=0.0, le=1.0, description="Progress of the adaptation (0.0 to 1.0)")
+    message: Optional[str] = Field(None, description="Additional status message")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="When the task was created")
+    updated_at: datetime = Field(default_factory=datetime.utcnow, description="When the status was last updated")
+
 class AnimationStyleBase(BaseModel):
     """Base schema for animation styles."""
     name: str = Field(..., description="Name of the animation style")
@@ -136,8 +146,9 @@ class VoiceModelBase(BaseModel):
 
 class VoiceCreateRequest(VoiceModelBase):
     """Schema for creating a new voice model."""
-    audio_files: conlist(Union[str, bytes], min_items=1) = Field(
+    audio_files: conlist(Union[str, bytes]) = Field(
         ...,
+        min_length=1,
         description="List of audio files or audio data to create the voice model from"
     )
     reference_text: Optional[str] = Field(

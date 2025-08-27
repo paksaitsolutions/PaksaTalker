@@ -1,0 +1,3 @@
+Test successful!
+Python executable: D:\PaksaTalker\venv\Scripts\python.exe
+Current directory: D:\PaksaTalker

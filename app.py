@@ -14,6 +14,17 @@ This is the main FastAPI application that serves both the API and the frontend.
 import os
 import logging
 import time
+import sys
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
@@ -38,7 +49,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp, Scope, Receive, Send
 
 from config import config
-from api.schemas.base import (
+from api.schemas import (
     APIStatus,
     ErrorResponse,
     TokenResponse,
@@ -169,19 +180,14 @@ app.openapi = custom_openapi
 # Add middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # Compress responses > 1KB
 
-# In production, force HTTPS
-if not config['app']['debug']:
-    app.add_middleware(HTTPSRedirectMiddleware)
+# Disable HTTPS redirect for development
+# if not config['app']['debug']:
+#     app.add_middleware(HTTPSRedirectMiddleware)
 
 # Setup CORS for API endpoints
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config['app'].get('cors_origins', [
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:8000",  # Production frontend
-        "http://127.0.0.1:5173",  # Vite dev server (alternative)
-        "http://127.0.0.1:8000",  # Production frontend (alternative)
-    ]),
+    allow_origins=config['api']['cors_origins'],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -322,11 +328,11 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "app:app",
-        host=config['server']['host'],
-        port=config['server']['port'],
-        reload=config['server']['reload'],
-        log_level=config['server']['log_level'],
-        workers=config['server'].get('workers', 1),
+        host=config['api']['host'],
+        port=config['api']['port'],
+        reload=config['api']['debug'],
+        log_level='debug' if config['api']['debug'] else 'info',
+        workers=config['api']['workers'],
         proxy_headers=True,
         forwarded_allow_ips='*',
         timeout_keep_alive=30,

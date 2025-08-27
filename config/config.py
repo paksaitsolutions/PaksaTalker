@@ -64,6 +64,14 @@ class Config:
                 'port': int(os.getenv('API_PORT', '8000')),
                 'workers': int(os.getenv('API_WORKERS', '1')),
                 'debug': os.getenv('API_DEBUG', 'False').lower() == 'true',
+                'cors_origins': [
+                    "http://localhost:5173",  # Vite dev server
+                    "http://localhost:5174",  # Vite dev server (alternative port)
+                    "http://localhost:8000",  # Production frontend
+                    "http://127.0.0.1:5173",  # Vite dev server (alternative)
+                    "http://127.0.0.1:5174",  # Vite dev server (alternative port)
+                    "http://127.0.0.1:8000",  # Production frontend (alternative)
+                ],
             },
         }
 
