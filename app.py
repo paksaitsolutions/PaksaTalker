@@ -345,7 +345,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "app:app",
         host=config['api']['host'],
-        port=8080,  # Use port 8080 to avoid conflicts
+        port=8000,  # Use port 8000
         reload=config['api']['debug'],
         log_level='debug' if config['api']['debug'] else 'info',
         workers=1,  # Use single worker to avoid port conflicts

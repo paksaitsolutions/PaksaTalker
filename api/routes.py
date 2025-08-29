@@ -27,6 +27,14 @@ from pydantic import BaseModel
 from werkzeug.utils import secure_filename
 
 from config import config
+from config.languages import (
+    SUPPORTED_LANGUAGES, 
+    get_voice_info, 
+    is_voice_supported, 
+    get_default_voice,
+    get_all_languages,
+    get_all_voices
+)
 from models.sadtalker import SadTalkerModel
 from models.wav2lip import Wav2LipModel
 from models.gesture import GestureModel
@@ -465,6 +473,57 @@ voice_router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+# Language and Voice Management Endpoints
+@router.get("/languages", response_model=Dict[str, Any])
+async def list_supported_languages():
+    """Get all supported languages and their voice counts."""
+    try:
+        languages = get_all_languages()
+        return {
+            "success": True,
+            "languages": languages,
+            "total_languages": len(languages),
+            "total_voices": sum(lang["voice_count"] for lang in languages)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/voices/all", response_model=Dict[str, Any])
+async def list_all_voices():
+    """Get all supported voices with detailed information."""
+    try:
+        voices = get_all_voices()
+        return {
+            "success": True,
+            "voices": voices,
+            "total_voices": len(voices)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/voices/validate/{voice_id}", response_model=Dict[str, Any])
+async def validate_voice(
+    voice_id: str
+):
+    """Validate if a voice ID is supported and get its information."""
+    try:
+        if is_voice_supported(voice_id):
+            voice_info = get_voice_info(voice_id)
+            return {
+                "success": True,
+                "supported": True,
+                "voice_info": voice_info
+            }
+        else:
+            return {
+                "success": True,
+                "supported": False,
+                "message": f"Voice '{voice_id}' is not supported",
+                "suggested_voice": get_default_voice("en-US")
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Style Presets Router
 style_router = APIRouter(
     prefix="/style-presets",
@@ -606,6 +665,11 @@ async def generate_video(
         image_path = await save_upload_file(image, "image")
         audio_path = await save_upload_file(audio, "audio") if audio else None
         
+        # Validate voice model
+        if voiceModel and not is_voice_supported(voiceModel):
+            # Use default voice if provided voice is not supported
+            voiceModel = get_default_voice("en-US")
+            
         # Generate audio from text if provided (placeholder)
         if text and not audio_path:
             # For now, create a dummy audio file
@@ -630,10 +694,11 @@ async def generate_video(
         task_id = str(uuid.uuid4())
         background_tasks.add_task(
             process_video_generation,
+            task_id=task_id,
             image_path=image_path,
             audio_path=audio_path,
             output_path=str(output_path),
-            task_id=task_id
+            resolution=resolution
         )
         
         return {
@@ -653,7 +718,8 @@ async def process_video_generation(
     task_id: str,
     image_path: str,
     audio_path: Optional[str],
-    output_path: str
+    output_path: str,
+    **kwargs
 ):
     """Background task to process video generation."""
     try:
@@ -665,7 +731,8 @@ async def process_video_generation(
             video_path = sadtalker.generate(
                 image_path=image_path,
                 audio_path=audio_path,
-                output_path=output_path
+                output_path=output_path,
+                resolution=kwargs.get('resolution', '480p')
             )
             
             # Enhance with Wav2Lip if needed
@@ -934,6 +1001,10 @@ async def generate_video_from_prompt(
         temp_dir = Path(config.get('paths.temp', 'temp'))
         temp_dir.mkdir(exist_ok=True)
         
+        # Validate voice model
+        if voice and not is_voice_supported(voice):
+            voice = get_default_voice("en-US")
+            
         # Generate TTS audio
         audio_path = temp_dir / f"{uuid.uuid4()}.wav"
         import wave
@@ -962,10 +1033,11 @@ async def generate_video_from_prompt(
         
         background_tasks.add_task(
             process_video_generation,
+            task_id=task_id,
             image_path=str(image_path),
             audio_path=str(audio_path),
             output_path=str(output_path),
-            task_id=task_id
+            resolution=resolution
         )
         
         return {

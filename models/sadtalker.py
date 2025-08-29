@@ -313,6 +313,7 @@ class SadTalkerModel(BaseModel):
         audio_path: str,
         output_path: Optional[str] = None,
         style: str = "default",
+        resolution: str = "480p",
         **kwargs
     ) -> str:
         """Generate a talking head video.
@@ -350,10 +351,24 @@ class SadTalkerModel(BaseModel):
                 device=self.device
             )
             
+            # Map resolution to dimensions
+            resolution_map = {
+                "240p": (320, 240),
+                "360p": (480, 360),
+                "480p": (640, 480),
+                "720p": (1280, 720),
+                "1080p": (1920, 1080),
+                "1440p": (2560, 1440),
+                "4k": (3840, 2160)
+            }
+            
+            width, height = resolution_map.get(resolution, (640, 480))
+            
             result_path = sadtalker.test(
                 source_image=image_path,
                 driven_audio=audio_path,
                 result_dir=os.path.dirname(output_path),
+                size=height,  # SadTalker uses height for size parameter
                 **kwargs
             )
             

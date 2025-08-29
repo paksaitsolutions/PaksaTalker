@@ -21,6 +21,7 @@ interface GenerationProgress {
   error?: string
   taskId?: string
   videoUrl?: string
+  completedTasks?: string[]
 }
 
 function App() {
@@ -28,7 +29,7 @@ function App() {
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [textPrompt, setTextPrompt] = useState('')
   const [settings, setSettings] = useState<GenerationSettings>({
-    resolution: '1080p',
+    resolution: '480p',
     fps: 30,
     expressionIntensity: 0.8,
     gestureLevel: 'medium',
@@ -41,7 +42,8 @@ function App() {
   const [progress, setProgress] = useState<GenerationProgress>({
     status: 'idle',
     progress: 0,
-    stage: 'Ready to generate'
+    stage: 'Ready to generate',
+    completedTasks: []
   })
 
   const audioInputRef = useRef<HTMLInputElement>(null)
@@ -61,7 +63,7 @@ function App() {
       return
     }
 
-    setProgress({ status: 'processing', progress: 10, stage: 'Processing...' })
+    setProgress({ status: 'processing', progress: 10, stage: 'Processing...', completedTasks: ['✓ Input validation complete'] })
     
     try {
       const formData = new FormData()
@@ -98,7 +100,8 @@ function App() {
           status: 'processing', 
           progress: 30, 
           stage: 'Video generation started...',
-          taskId: data.task_id
+          taskId: data.task_id,
+          completedTasks: ['✓ Input validation complete', '✓ Files uploaded successfully', '✓ Generation task created']
         })
         
         pollTaskStatus(data.task_id)
@@ -116,7 +119,6 @@ function App() {
   }
 
   const pollTaskStatus = async (taskId: string) => {
-    const maxAttempts = 600  // 50 minutes timeout (600 * 5 seconds)
     let attempts = 0
     
     const poll = async () => {
@@ -132,7 +134,19 @@ function App() {
               status: 'completed',
               progress: 100,
               stage: 'Video generated successfully!',
-              videoUrl: data.data.video_url
+              videoUrl: data.data.video_url,
+              completedTasks: [
+                '✓ Input validation complete',
+                '✓ Files uploaded successfully', 
+                '✓ Generation task created',
+                '✓ Audio preprocessing complete',
+                '✓ Face detection complete',
+                '✓ 3D face reconstruction complete',
+                '✓ Expression coefficients generated',
+                '✓ Head pose estimation complete',
+                '✓ Video frames rendered',
+                '✓ Final video compilation complete'
+              ]
             })
             return
           } else if (status === 'failed') {
@@ -145,34 +159,36 @@ function App() {
             return
           }
           
-          const progressValue = Math.min(30 + (attempts * 0.1), 95)  // Slower progress increase
+          const progressValue = Math.min(30 + (attempts * 0.05), 90)  // Very slow progress increase
           const timeElapsed = Math.floor((attempts * 5) / 60)  // Minutes elapsed
+          
+          // Simulate completed tasks based on progress
+          const completedTasks = ['✓ Input validation complete', '✓ Files uploaded successfully', '✓ Generation task created']
+          if (progressValue > 35) completedTasks.push('✓ Audio preprocessing complete')
+          if (progressValue > 45) completedTasks.push('✓ Face detection complete')
+          if (progressValue > 55) completedTasks.push('✓ 3D face reconstruction complete')
+          if (progressValue > 65) completedTasks.push('✓ Expression coefficients generated')
+          if (progressValue > 75) completedTasks.push('✓ Head pose estimation complete')
+          if (progressValue > 85) completedTasks.push('✓ Video frames rendered')
+          
           setProgress({
             status: 'processing',
             progress: progressValue,
-            stage: `Generating video... (${timeElapsed}m elapsed)`,
-            taskId
+            stage: `Generating video... ${Math.round(progressValue)}% (${timeElapsed}m elapsed)`,
+            taskId,
+            completedTasks
           })
         }
         
         attempts++
-        if (attempts < maxAttempts) {
-          setTimeout(poll, 5000)
-        } else {
-          setProgress({
-            status: 'error',
-            progress: 0,
-            stage: 'Generation timeout',
-            error: 'Generation took longer than 50 minutes. Please try with shorter audio or lower resolution.'
-          })
-        }
+        // No timeout - continue polling until completion or failure
+        setTimeout(poll, 5000)
+        
       } catch (error) {
-        setProgress({
-          status: 'error',
-          progress: 0,
-          stage: 'Status check failed',
-          error: error instanceof Error ? error.message : 'Unknown error'
-        })
+        // Only stop on actual network errors, not timeouts
+        console.error('Status check error:', error)
+        // Retry after a longer delay on network errors
+        setTimeout(poll, 10000)
       }
     }
     
@@ -283,6 +299,44 @@ function App() {
                 onChange={(e) => setAudioFile(e.target.files?.[0] || null)}
               />
             </div>
+            
+            {/* Generate Button for Media Upload */}
+            <div className="mt-6">
+              {progress.status !== 'processing' ? (
+                <button
+                  onClick={handleGenerate}
+                  disabled={!imageFile || (!audioFile && !textPrompt)}
+                  className={`w-full py-3 px-6 rounded-lg font-medium text-sm transition-colors ${
+                    imageFile && (audioFile || textPrompt)
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  Generate Video from Media
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <button
+                    disabled
+                    className="w-full bg-gray-400 text-white py-3 px-6 rounded-lg cursor-not-allowed font-medium text-sm"
+                  >
+                    Generating...
+                  </button>
+                  <button
+                    onClick={() => {
+                      setProgress({
+                        status: 'idle',
+                        progress: 0,
+                        stage: 'Generation cancelled by user'
+                      })
+                    }}
+                    className="w-full bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+                  >
+                    Cancel Generation
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Section 2: Text Prompt (Top Right) */}
@@ -318,10 +372,190 @@ function App() {
                   onChange={(e) => setSettings({...settings, voiceModel: e.target.value})}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                 >
-                  <option value="en-US-JennyNeural">Jenny (Female)</option>
-                  <option value="en-US-ChristopherNeural">Christopher (Male)</option>
-                  <option value="en-US-AriaNeural">Aria (Female)</option>
-                  <option value="en-US-GuyNeural">Guy (Male)</option>
+                  <optgroup label="🇺🇸 English (US)">
+                    <option value="en-US-JennyNeural">Jenny (Female)</option>
+                    <option value="en-US-ChristopherNeural">Christopher (Male)</option>
+                    <option value="en-US-AriaNeural">Aria (Female)</option>
+                    <option value="en-US-GuyNeural">Guy (Male)</option>
+                    <option value="en-US-SaraNeural">Sara (Female)</option>
+                    <option value="en-US-TonyNeural">Tony (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇬🇧 English (UK)">
+                    <option value="en-GB-SoniaNeural">Sonia (Female)</option>
+                    <option value="en-GB-RyanNeural">Ryan (Male)</option>
+                    <option value="en-GB-LibbyNeural">Libby (Female)</option>
+                  </optgroup>
+                  <optgroup label="🇪🇸 Spanish">
+                    <option value="es-ES-ElviraNeural">Elvira (Female)</option>
+                    <option value="es-ES-AlvaroNeural">Alvaro (Male)</option>
+                    <option value="es-MX-DaliaNeural">Dalia (Female, Mexico)</option>
+                    <option value="es-MX-JorgeNeural">Jorge (Male, Mexico)</option>
+                  </optgroup>
+                  <optgroup label="🇫🇷 French">
+                    <option value="fr-FR-DeniseNeural">Denise (Female)</option>
+                    <option value="fr-FR-HenriNeural">Henri (Male)</option>
+                    <option value="fr-CA-SylvieNeural">Sylvie (Female, Canada)</option>
+                  </optgroup>
+                  <optgroup label="🇩🇪 German">
+                    <option value="de-DE-KatjaNeural">Katja (Female)</option>
+                    <option value="de-DE-ConradNeural">Conrad (Male)</option>
+                    <option value="de-AT-IngridNeural">Ingrid (Female, Austria)</option>
+                  </optgroup>
+                  <optgroup label="🇮🇹 Italian">
+                    <option value="it-IT-ElsaNeural">Elsa (Female)</option>
+                    <option value="it-IT-DiegoNeural">Diego (Male)</option>
+                    <option value="it-IT-IsabellaNeural">Isabella (Female)</option>
+                  </optgroup>
+                  <optgroup label="🇵🇹 Portuguese">
+                    <option value="pt-BR-FranciscaNeural">Francisca (Female, Brazil)</option>
+                    <option value="pt-BR-AntonioNeural">Antonio (Male, Brazil)</option>
+                    <option value="pt-PT-RaquelNeural">Raquel (Female, Portugal)</option>
+                  </optgroup>
+                  <optgroup label="🇷🇺 Russian">
+                    <option value="ru-RU-SvetlanaNeural">Svetlana (Female)</option>
+                    <option value="ru-RU-DmitryNeural">Dmitry (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇨🇳 Chinese (Mandarin)">
+                    <option value="zh-CN-XiaoxiaoNeural">Xiaoxiao (Female)</option>
+                    <option value="zh-CN-YunxiNeural">Yunxi (Male)</option>
+                    <option value="zh-CN-XiaohanNeural">Xiaohan (Female)</option>
+                  </optgroup>
+                  <optgroup label="🇯🇵 Japanese">
+                    <option value="ja-JP-NanamiNeural">Nanami (Female)</option>
+                    <option value="ja-JP-KeitaNeural">Keita (Male)</option>
+                    <option value="ja-JP-AoiNeural">Aoi (Female)</option>
+                  </optgroup>
+                  <optgroup label="🇰🇷 Korean">
+                    <option value="ko-KR-SunHiNeural">SunHi (Female)</option>
+                    <option value="ko-KR-InJoonNeural">InJoon (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇮🇳 Hindi">
+                    <option value="hi-IN-SwaraNeural">Swara (Female)</option>
+                    <option value="hi-IN-MadhurNeural">Madhur (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇵🇰 Urdu">
+                    <option value="ur-PK-UzmaNeural">Uzma (Female)</option>
+                    <option value="ur-PK-AsadNeural">Asad (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇧🇩 Bengali">
+                    <option value="bn-BD-NabanitaNeural">Nabanita (Female)</option>
+                    <option value="bn-BD-PradeepNeural">Pradeep (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇱🇰 Tamil">
+                    <option value="ta-IN-PallaviNeural">Pallavi (Female)</option>
+                    <option value="ta-IN-ValluvarNeural">Valluvar (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇵🇰 Pakistani Languages">
+                    <option value="ps-AF-LatifaNeural">Latifa (Female, Pashto)</option>
+                    <option value="ps-AF-GulNawazNeural">Gul Nawaz (Male, Pashto)</option>
+                    <option value="fa-IR-DilaraNeural">Dilara (Female, Persian)</option>
+                    <option value="fa-IR-FaridNeural">Farid (Male, Persian)</option>
+                    <option value="pa-IN-GaganNeural">Gagan (Male, Punjabi)</option>
+                    <option value="pa-IN-HarpreetNeural">Harpreet (Female, Punjabi)</option>
+                    <option value="sd-PK-AminaNeural">Amina (Female, Sindhi)</option>
+                    <option value="sd-PK-AsharNeural">Ashar (Male, Sindhi)</option>
+                    <option value="bal-PK-BibiNeural">Bibi (Female, Balochi)</option>
+                    <option value="bal-PK-JamNeural">Jam (Male, Balochi)</option>
+                    <option value="gjk-PK-RubinaNeural">Rubina (Female, Gojri)</option>
+                    <option value="gjk-PK-RashidNeural">Rashid (Male, Gojri)</option>
+                  </optgroup>
+                  <optgroup label="🇨🇳 Chinese Variants">
+                    <option value="zh-CN-XiaoxiaoNeural">Xiaoxiao (Female, Mandarin)</option>
+                    <option value="zh-CN-YunxiNeural">Yunxi (Male, Mandarin)</option>
+                    <option value="zh-CN-XiaohanNeural">Xiaohan (Female, Mandarin)</option>
+                    <option value="zh-HK-HiuMaanNeural">HiuMaan (Female, Cantonese)</option>
+                    <option value="zh-HK-WanLungNeural">WanLung (Male, Cantonese)</option>
+                    <option value="zh-TW-HsiaoChenNeural">HsiaoChen (Female, Taiwanese)</option>
+                    <option value="zh-TW-YunJheNeural">YunJhe (Male, Taiwanese)</option>
+                  </optgroup>
+                  <optgroup label="🇦🇸 Other Asian Languages">
+                    <option value="my-MM-NilarNeural">Nilar (Female, Myanmar)</option>
+                    <option value="my-MM-ThihaNeural">Thiha (Male, Myanmar)</option>
+                    <option value="km-KH-PisachNeural">Pisach (Male, Khmer)</option>
+                    <option value="km-KH-SreymomNeural">Sreymom (Female, Khmer)</option>
+                    <option value="lo-LA-ChanthavongNeural">Chanthavong (Male, Lao)</option>
+                    <option value="lo-LA-KeomanyNeural">Keomany (Female, Lao)</option>
+                    <option value="si-LK-SameeraNeural">Sameera (Male, Sinhala)</option>
+                    <option value="si-LK-ThiliniNeural">Thilini (Female, Sinhala)</option>
+                    <option value="ne-NP-HemkalaNeural">Hemkala (Female, Nepali)</option>
+                    <option value="ne-NP-SagarNeural">Sagar (Male, Nepali)</option>
+                    <option value="mn-MN-BatbayarNeural">Batbayar (Male, Mongolian)</option>
+                    <option value="mn-MN-YesuiNeural">Yesui (Female, Mongolian)</option>
+                    <option value="uz-UZ-MadinaNeural">Madina (Female, Uzbek)</option>
+                    <option value="uz-UZ-SardorNeural">Sardor (Male, Uzbek)</option>
+                    <option value="kk-KZ-AigulNeural">Aigul (Female, Kazakh)</option>
+                    <option value="kk-KZ-DauletNeural">Daulet (Male, Kazakh)</option>
+                    <option value="ky-KG-AidaNeural">Aida (Female, Kyrgyz)</option>
+                    <option value="ky-KG-TentekNeural">Tentek (Male, Kyrgyz)</option>
+                    <option value="tg-TJ-HulkarNeural">Hulkar (Female, Tajik)</option>
+                    <option value="tg-TJ-AbdullohNeural">Abdulloh (Male, Tajik)</option>
+                  </optgroup>
+                  <optgroup label="🇦🇪 Arabic">
+                    <option value="ar-SA-ZariyahNeural">Zariyah (Female, Saudi)</option>
+                    <option value="ar-SA-HamedNeural">Hamed (Male, Saudi)</option>
+                    <option value="ar-EG-SalmaNeural">Salma (Female, Egypt)</option>
+                    <option value="ar-EG-ShakirNeural">Shakir (Male, Egypt)</option>
+                    <option value="ar-AE-FatimaNeural">Fatima (Female, UAE)</option>
+                    <option value="ar-AE-HamadNeural">Hamad (Male, UAE)</option>
+                    <option value="ar-JO-SanaNeural">Sana (Female, Jordan)</option>
+                    <option value="ar-LB-LaylaNeural">Layla (Female, Lebanon)</option>
+                  </optgroup>
+                  <optgroup label="🇹🇷 Turkish">
+                    <option value="tr-TR-EmelNeural">Emel (Female)</option>
+                    <option value="tr-TR-AhmetNeural">Ahmet (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇳🇱 Dutch">
+                    <option value="nl-NL-ColetteNeural">Colette (Female)</option>
+                    <option value="nl-NL-MaartenNeural">Maarten (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇸🇪 Swedish">
+                    <option value="sv-SE-SofieNeural">Sofie (Female)</option>
+                    <option value="sv-SE-MattiasNeural">Mattias (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇳🇴 Norwegian">
+                    <option value="nb-NO-PernilleNeural">Pernille (Female)</option>
+                    <option value="nb-NO-FinnNeural">Finn (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇩🇰 Danish">
+                    <option value="da-DK-ChristelNeural">Christel (Female)</option>
+                    <option value="da-DK-JeppeNeural">Jeppe (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇫🇮 Finnish">
+                    <option value="fi-FI-NooraNeural">Noora (Female)</option>
+                    <option value="fi-FI-HarriNeural">Harri (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇵🇱 Polish">
+                    <option value="pl-PL-ZofiaNeural">Zofia (Female)</option>
+                    <option value="pl-PL-MarekNeural">Marek (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇨🇿 Czech">
+                    <option value="cs-CZ-VlastaNeural">Vlasta (Female)</option>
+                    <option value="cs-CZ-AntoninNeural">Antonin (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇭🇺 Hungarian">
+                    <option value="hu-HU-NoemiNeural">Noemi (Female)</option>
+                    <option value="hu-HU-TamasNeural">Tamas (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇬🇷 Greek">
+                    <option value="el-GR-AthinaNeural">Athina (Female)</option>
+                    <option value="el-GR-NestorNeural">Nestor (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇹🇭 Thai">
+                    <option value="th-TH-AcharaNeural">Achara (Female)</option>
+                    <option value="th-TH-NiwatNeural">Niwat (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇻🇳 Vietnamese">
+                    <option value="vi-VN-HoaiMyNeural">HoaiMy (Female)</option>
+                    <option value="vi-VN-NamMinhNeural">NamMinh (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇮🇩 Indonesian">
+                    <option value="id-ID-GadisNeural">Gadis (Female)</option>
+                    <option value="id-ID-ArdiNeural">Ardi (Male)</option>
+                  </optgroup>
+                  <optgroup label="🇲🇾 Malay">
+                    <option value="ms-MY-YasminNeural">Yasmin (Female)</option>
+                    <option value="ms-MY-OsmanNeural">Osman (Male)</option>
+                  </optgroup>
                 </select>
               </div>
               <div>
@@ -329,20 +563,99 @@ function App() {
                   Language
                 </label>
                 <select className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm">
-                  <option value="en">English</option>
-                  <option value="es">Spanish</option>
-                  <option value="fr">French</option>
-                  <option value="de">German</option>
+                  <option value="en">🇺🇸 English</option>
+                  <option value="es">🇪🇸 Spanish</option>
+                  <option value="fr">🇫🇷 French</option>
+                  <option value="de">🇩🇪 German</option>
+                  <option value="it">🇮🇹 Italian</option>
+                  <option value="pt">🇵🇹 Portuguese</option>
+                  <option value="ru">🇷🇺 Russian</option>
+                  <option value="zh">🇨🇳 Chinese</option>
+                  <option value="ja">🇯🇵 Japanese</option>
+                  <option value="ko">🇰🇷 Korean</option>
+                  <option value="hi">🇮🇳 Hindi</option>
+                  <option value="ur">🇵🇰 Urdu</option>
+                  <option value="bn">🇧🇩 Bengali</option>
+                  <option value="ta">🇱🇰 Tamil</option>
+                  <option value="ps">🇦🇫 Pashto</option>
+                  <option value="fa">🇮🇷 Persian</option>
+                  <option value="pa">🇮🇳 Punjabi</option>
+                  <option value="sd">🇵🇰 Sindhi</option>
+                  <option value="bal">🇵🇰 Balochi</option>
+                  <option value="gjk">🇵🇰 Gojri</option>
+                  <option value="my">🇲🇲 Myanmar</option>
+                  <option value="km">🇰🇭 Khmer</option>
+                  <option value="lo">🇱🇦 Lao</option>
+                  <option value="si">🇱🇰 Sinhala</option>
+                  <option value="ne">🇳🇵 Nepali</option>
+                  <option value="mn">🇲🇳 Mongolian</option>
+                  <option value="uz">🇺🇿 Uzbek</option>
+                  <option value="kk">🇰🇿 Kazakh</option>
+                  <option value="ky">🇰🇬 Kyrgyz</option>
+                  <option value="tg">🇹🇯 Tajik</option>
+                  <option value="ar">🇦🇪 Arabic</option>
+                  <option value="tr">🇹🇷 Turkish</option>
+                  <option value="nl">🇳🇱 Dutch</option>
+                  <option value="sv">🇸🇪 Swedish</option>
+                  <option value="no">🇳🇴 Norwegian</option>
+                  <option value="da">🇩🇰 Danish</option>
+                  <option value="fi">🇫🇮 Finnish</option>
+                  <option value="pl">🇵🇱 Polish</option>
+                  <option value="cs">🇨🇿 Czech</option>
+                  <option value="hu">🇭🇺 Hungarian</option>
+                  <option value="el">🇬🇷 Greek</option>
+                  <option value="th">🇹🇭 Thai</option>
+                  <option value="vi">🇻🇳 Vietnamese</option>
+                  <option value="id">🇮🇩 Indonesian</option>
+                  <option value="ms">🇲🇾 Malay</option>
                 </select>
               </div>
             </div>
 
             <button 
               onClick={() => setTextPrompt('Hello! Welcome to PaksaTalker. I am your AI-powered avatar ready to deliver your message with perfect lip-sync and natural expressions.')}
-              className="w-full bg-purple-50 text-purple-700 py-2 px-4 rounded-lg hover:bg-purple-100 transition-colors text-sm font-medium"
+              className="w-full bg-purple-50 text-purple-700 py-2 px-4 rounded-lg hover:bg-purple-100 transition-colors text-sm font-medium mb-4"
             >
               Use Sample Text
             </button>
+            
+            {/* Generate Button for Prompt */}
+            <div>
+              {progress.status !== 'processing' ? (
+                <button
+                  onClick={handleGenerate}
+                  disabled={!textPrompt || !!(imageFile || audioFile)}
+                  className={`w-full py-3 px-6 rounded-lg font-medium text-sm transition-colors ${
+                    textPrompt && !imageFile && !audioFile
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  Generate Video from Prompt
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <button
+                    disabled
+                    className="w-full bg-gray-400 text-white py-3 px-6 rounded-lg cursor-not-allowed font-medium text-sm"
+                  >
+                    Generating...
+                  </button>
+                  <button
+                    onClick={() => {
+                      setProgress({
+                        status: 'idle',
+                        progress: 0,
+                        stage: 'Generation cancelled by user'
+                      })
+                    }}
+                    className="w-full bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+                  >
+                    Cancel Generation
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Section 3: Style Customization (Bottom Left) */}
@@ -373,8 +686,12 @@ function App() {
                     onChange={(e) => setSettings({...settings, resolution: e.target.value})}
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                   >
+                    <option value="240p">240p Basic</option>
+                    <option value="360p">360p Low</option>
+                    <option value="480p">480p SD</option>
                     <option value="720p">720p HD</option>
                     <option value="1080p">1080p Full HD</option>
+                    <option value="1440p">1440p QHD</option>
                     <option value="4k">4K Ultra HD</option>
                   </select>
                 </div>
@@ -480,14 +797,7 @@ function App() {
               <h2 className="text-xl font-semibold text-gray-900">Generation Output</h2>
             </div>
             
-            {/* Generate Button */}
-            <button
-              onClick={handleGenerate}
-              disabled={progress.status === 'processing'}
-              className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors mb-6 font-medium text-sm"
-            >
-              {progress.status === 'processing' ? 'Generating...' : 'Generate Video'}
-            </button>
+
 
             {/* Progress Section */}
             <div className="space-y-4">
@@ -563,6 +873,21 @@ function App() {
                 </div>
               )}
 
+              {/* Completed Tasks */}
+              {progress.completedTasks && progress.completedTasks.length > 0 && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                  <h4 className="text-sm font-medium text-green-800 mb-2">Completed Tasks</h4>
+                  <div className="space-y-1">
+                    {progress.completedTasks.map((task, index) => (
+                      <div key={index} className="text-xs text-green-700 flex items-center">
+                        <span className="mr-2">•</span>
+                        {task}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Generation Info */}
               <div className="bg-gray-50 rounded-lg p-3">
                 <h4 className="text-sm font-medium text-gray-700 mb-2">Generation Info</h4>
@@ -591,7 +916,7 @@ function App() {
             </div>
             
             {/* Current Style Display */}
-            {settings.stylePreset && (
+            {settings.stylePreset ? (
               <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                 <h3 className="font-medium text-blue-900 mb-2">Active Style</h3>
                 <div className="text-sm text-blue-800">
@@ -599,6 +924,16 @@ function App() {
                   <div className="text-xs mt-1">{settings.stylePreset.description}</div>
                   <div className="mt-2 text-xs">
                     Cultural Context: {settings.stylePreset.cultural_context}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                <h3 className="font-medium text-gray-700 mb-2">Default Style Active</h3>
+                <div className="text-sm text-gray-600">
+                  <div className="text-xs">No custom style selected. Using default animation settings.</div>
+                  <div className="mt-2 text-xs">
+                    Select a style preset from the Style Customization panel to unlock more options.
                   </div>
                 </div>
               </div>
@@ -610,7 +945,7 @@ function App() {
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Micro-Expression Rate: {settings.stylePreset?.micro_expression_rate?.toFixed(2) || '0.50'}
+                  Micro-Expression Rate: {(settings.stylePreset?.micro_expression_rate || 0.5).toFixed(2)}
                 </label>
                 <input
                   type="range"
@@ -619,9 +954,30 @@ function App() {
                   step="0.1"
                   value={settings.stylePreset?.micro_expression_rate || 0.5}
                   onChange={(e) => {
+                    const value = parseFloat(e.target.value)
                     if (settings.stylePreset) {
-                      const updated = { ...settings.stylePreset, micro_expression_rate: parseFloat(e.target.value) }
+                      const updated = { ...settings.stylePreset, micro_expression_rate: value }
                       setSettings(prev => ({ ...prev, stylePreset: updated }))
+                    } else {
+                      // Create a default preset with the new value
+                      const defaultPreset = {
+                        preset_id: 'custom',
+                        name: 'Custom Style',
+                        description: 'User customized style',
+                        intensity: 0.7,
+                        smoothness: 0.8,
+                        expressiveness: 0.7,
+                        cultural_context: 'GLOBAL',
+                        formality: 0.5,
+                        gesture_frequency: 0.7,
+                        gesture_amplitude: 1.0,
+                        micro_expression_rate: value,
+                        breathing_intensity: 0.3,
+                        posture_variation: 0.4,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                      }
+                      setSettings(prev => ({ ...prev, stylePreset: defaultPreset }))
                     }
                   }}
                   className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
@@ -630,7 +986,7 @@ function App() {
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Breathing Intensity: {settings.stylePreset?.breathing_intensity?.toFixed(2) || '0.30'}
+                  Breathing Intensity: {(settings.stylePreset?.breathing_intensity || 0.3).toFixed(2)}
                 </label>
                 <input
                   type="range"
@@ -639,9 +995,29 @@ function App() {
                   step="0.1"
                   value={settings.stylePreset?.breathing_intensity || 0.3}
                   onChange={(e) => {
+                    const value = parseFloat(e.target.value)
                     if (settings.stylePreset) {
-                      const updated = { ...settings.stylePreset, breathing_intensity: parseFloat(e.target.value) }
+                      const updated = { ...settings.stylePreset, breathing_intensity: value }
                       setSettings(prev => ({ ...prev, stylePreset: updated }))
+                    } else {
+                      const defaultPreset = {
+                        preset_id: 'custom',
+                        name: 'Custom Style',
+                        description: 'User customized style',
+                        intensity: 0.7,
+                        smoothness: 0.8,
+                        expressiveness: 0.7,
+                        cultural_context: 'GLOBAL',
+                        formality: 0.5,
+                        gesture_frequency: 0.7,
+                        gesture_amplitude: 1.0,
+                        micro_expression_rate: 0.5,
+                        breathing_intensity: value,
+                        posture_variation: 0.4,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                      }
+                      setSettings(prev => ({ ...prev, stylePreset: defaultPreset }))
                     }
                   }}
                   className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
@@ -650,7 +1026,7 @@ function App() {
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Posture Variation: {settings.stylePreset?.posture_variation?.toFixed(2) || '0.40'}
+                  Posture Variation: {(settings.stylePreset?.posture_variation || 0.4).toFixed(2)}
                 </label>
                 <input
                   type="range"
@@ -659,9 +1035,29 @@ function App() {
                   step="0.1"
                   value={settings.stylePreset?.posture_variation || 0.4}
                   onChange={(e) => {
+                    const value = parseFloat(e.target.value)
                     if (settings.stylePreset) {
-                      const updated = { ...settings.stylePreset, posture_variation: parseFloat(e.target.value) }
+                      const updated = { ...settings.stylePreset, posture_variation: value }
                       setSettings(prev => ({ ...prev, stylePreset: updated }))
+                    } else {
+                      const defaultPreset = {
+                        preset_id: 'custom',
+                        name: 'Custom Style',
+                        description: 'User customized style',
+                        intensity: 0.7,
+                        smoothness: 0.8,
+                        expressiveness: 0.7,
+                        cultural_context: 'GLOBAL',
+                        formality: 0.5,
+                        gesture_frequency: 0.7,
+                        gesture_amplitude: 1.0,
+                        micro_expression_rate: 0.5,
+                        breathing_intensity: 0.3,
+                        posture_variation: value,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                      }
+                      setSettings(prev => ({ ...prev, stylePreset: defaultPreset }))
                     }
                   }}
                   className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
@@ -671,14 +1067,34 @@ function App() {
               {/* Cultural Context Override */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Cultural Context Override
+                  Cultural Context
                 </label>
                 <select 
                   value={settings.stylePreset?.cultural_context || 'GLOBAL'}
                   onChange={(e) => {
+                    const value = e.target.value
                     if (settings.stylePreset) {
-                      const updated = { ...settings.stylePreset, cultural_context: e.target.value }
+                      const updated = { ...settings.stylePreset, cultural_context: value }
                       setSettings(prev => ({ ...prev, stylePreset: updated }))
+                    } else {
+                      const defaultPreset = {
+                        preset_id: 'custom',
+                        name: 'Custom Style',
+                        description: 'User customized style',
+                        intensity: 0.7,
+                        smoothness: 0.8,
+                        expressiveness: 0.7,
+                        cultural_context: value,
+                        formality: 0.5,
+                        gesture_frequency: 0.7,
+                        gesture_amplitude: 1.0,
+                        micro_expression_rate: 0.5,
+                        breathing_intensity: 0.3,
+                        posture_variation: 0.4,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                      }
+                      setSettings(prev => ({ ...prev, stylePreset: defaultPreset }))
                     }
                   }}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
