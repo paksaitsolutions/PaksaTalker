@@ -84,6 +84,7 @@ class GestureType(Enum):
     SHAKE_HEAD = auto()
     SHRUG = auto()
     WAVE = auto()
+    WAVE_AWAY = auto()
     
     # Emotional gestures
     CLENCH_FIST = auto()  # Anger
@@ -205,7 +206,7 @@ class EmotionGestureMapper:
                 EmotionType.DISGUSTED: [
                     (GestureType.NOSE_WRINKLE, 0.5),
                     (GestureType.WAVE_AWAY, 0.3),
-                    (GestureType.HEAD_SHAKE, 0.2)
+                    (GestureType.SHAKE_HEAD, 0.2)
                 ],
                 EmotionType.FEARFUL: [
                     (GestureType.ARMS_CLOSE, 0.5),
@@ -239,6 +240,59 @@ class EmotionGestureMapper:
                 EmotionType.HAPPY: [
                     (GestureType.HAND_ON_HEART, 0.5),
                     (GestureType.EMPHATIC_HAND, 0.5)
+                ],
+                EmotionType.THINKING: [
+                    (GestureType.CHIN_STROKE, 0.6),
+                    (GestureType.FINGER_TO_LIP, 0.4)
+                ],
+                EmotionType.AGREEING: [
+                    (GestureType.NOD, 0.7),
+                    (GestureType.OPEN_PALM, 0.3)
+                ]
+            },
+            CulturalContext.SOUTH_ASIAN: {
+                # Head movements, respectful gestures
+                EmotionType.HAPPY: [
+                    (GestureType.HEAD_TILT, 0.6),
+                    (GestureType.SMALL_SMILE, 0.4)
+                ],
+                EmotionType.AGREEING: [
+                    (GestureType.HEAD_TILT, 0.8),
+                    (GestureType.LIGHT_NOD, 0.2)
+                ],
+                EmotionType.THINKING: [
+                    (GestureType.HEAD_TILT, 0.5),
+                    (GestureType.SLOW_BLINK, 0.5)
+                ]
+            },
+            CulturalContext.LATIN_AMERICAN: {
+                # Expressive, warm gestures
+                EmotionType.HAPPY: [
+                    (GestureType.BIG_GESTURE, 0.6),
+                    (GestureType.OPEN_PALM_UP, 0.4)
+                ],
+                EmotionType.EXCITED: [
+                    (GestureType.BOUNCY, 0.7),
+                    (GestureType.EMPHATIC_HAND, 0.3)
+                ],
+                EmotionType.AGREEING: [
+                    (GestureType.QUICK_NOD, 0.6),
+                    (GestureType.OPEN_PALM, 0.4)
+                ]
+            },
+            CulturalContext.AFRICAN: {
+                # Rhythmic, community-oriented gestures
+                EmotionType.HAPPY: [
+                    (GestureType.BOUNCY, 0.5),
+                    (GestureType.OPEN_PALM_UP, 0.5)
+                ],
+                EmotionType.THINKING: [
+                    (GestureType.CHIN_STROKE, 0.4),
+                    (GestureType.HEAD_TILT, 0.6)
+                ],
+                EmotionType.AGREEING: [
+                    (GestureType.NOD, 0.7),
+                    (GestureType.HAND_TO_CHEST, 0.3)
                 ]
             }
         }
@@ -246,10 +300,10 @@ class EmotionGestureMapper:
         # Fallback to GLOBAL for any missing cultural mappings
         for culture in CulturalContext:
             if culture != CulturalContext.GLOBAL:
+                if culture not in self._gesture_mappings:
+                    self._gesture_mappings[culture] = {}
                 for emotion in EmotionType:
                     if emotion not in self._gesture_mappings[culture]:
-                        if culture not in self._gesture_mappings:
-                            self._gesture_mappings[culture] = {}
                         self._gesture_mappings[culture][emotion] = self._gesture_mappings[CulturalContext.GLOBAL].get(emotion, [])
     
     def _setup_cultural_adaptations(self):
@@ -259,43 +313,62 @@ class EmotionGestureMapper:
                 'gesture_scale': 1.0,
                 'personal_space': 1.2,
                 'expressiveness': 0.8,
-                'contact_tendency': 0.6
+                'contact_tendency': 0.6,
+                'formality_preference': 0.7,
+                'eye_contact_intensity': 0.8
             },
             CulturalContext.EAST_ASIAN: {
                 'gesture_scale': 0.7,
                 'personal_space': 1.0,
                 'expressiveness': 0.5,
-                'contact_tendency': 0.3
+                'contact_tendency': 0.3,
+                'formality_preference': 0.9,
+                'eye_contact_intensity': 0.4,
+                'bow_tendency': 0.8
             },
             CulturalContext.MIDDLE_EASTERN: {
                 'gesture_scale': 1.2,
                 'personal_space': 0.8,
                 'expressiveness': 1.0,
-                'contact_tendency': 0.8
+                'contact_tendency': 0.8,
+                'formality_preference': 0.8,
+                'eye_contact_intensity': 0.9,
+                'hand_gesture_frequency': 1.3
             },
             CulturalContext.SOUTH_ASIAN: {
                 'gesture_scale': 1.1,
                 'personal_space': 0.9,
                 'expressiveness': 0.9,
-                'contact_tendency': 0.7
+                'contact_tendency': 0.7,
+                'formality_preference': 0.8,
+                'eye_contact_intensity': 0.6,
+                'head_movement_frequency': 1.4
             },
             CulturalContext.LATIN_AMERICAN: {
                 'gesture_scale': 1.3,
                 'personal_space': 0.7,
                 'expressiveness': 1.1,
-                'contact_tendency': 0.9
+                'contact_tendency': 0.9,
+                'formality_preference': 0.4,
+                'eye_contact_intensity': 0.9,
+                'warmth_factor': 1.2
             },
             CulturalContext.AFRICAN: {
                 'gesture_scale': 1.1,
                 'personal_space': 0.9,
                 'expressiveness': 0.9,
-                'contact_tendency': 0.7
+                'contact_tendency': 0.7,
+                'formality_preference': 0.6,
+                'eye_contact_intensity': 0.8,
+                'rhythmic_tendency': 1.2
             },
             CulturalContext.GLOBAL: {
                 'gesture_scale': 1.0,
                 'personal_space': 1.0,
                 'expressiveness': 0.8,
-                'contact_tendency': 0.5
+                'contact_tendency': 0.5,
+                'formality_preference': 0.6,
+                'eye_contact_intensity': 0.7
             }
         }
     

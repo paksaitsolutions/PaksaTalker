@@ -332,42 +332,39 @@ class SadTalkerModel(BaseModel):
         try:
             # Set up output path
             if output_path is None:
-                output_dir = config['paths.output']
+                output_dir = config.get('paths.output', 'output')
                 os.makedirs(output_dir, exist_ok=True)
                 output_path = os.path.join(
                     output_dir,
                     f"sadtalker_{os.path.basename(image_path).split('.')[0]}.mp4"
                 )
             
-            # Generate video (simplified version - actual implementation would use the loaded models)
-            # This is a placeholder for the actual generation logic
+            # Use the actual SadTalker implementation
+            from src.gradio_demo import SadTalker as _SadTalker
             
-            # For now, just copy the input image as a video
-            self._create_dummy_video(image_path, output_path, duration=5.0)
+            sadtalker = _SadTalker(
+                checkpoint_path=config.get('sadtalker.checkpoint_dir', 'models/sadtalker/checkpoints'),
+                config_path=config.get('sadtalker.config_dir', 'models/sadtalker/configs'),
+                device=self.device
+            )
+            
+            result_path = sadtalker.test(
+                source_image=image_path,
+                driven_audio=audio_path,
+                result_dir=os.path.dirname(output_path),
+                **kwargs
+            )
+            
+            # Move result to final output path if different
+            if result_path != output_path and os.path.exists(result_path):
+                os.rename(result_path, output_path)
             
             return output_path
             
         except Exception as e:
             raise RuntimeError(f"Failed to generate video: {e}")
     
-    def _create_dummy_video(self, image_path: str, output_path: str, duration: float = 5.0) -> None:
-        """Create a dummy video from an image (for testing)."""
-        img = cv2.imread(image_path)
-        if img is None:
-            raise ValueError(f"Failed to load image: {image_path}")
-        
-        # Create a video writer
-        height, width = img.shape[:2]
-        fps = 25
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        
-        # Write the same frame multiple times
-        for _ in range(int(duration * fps)):
-            out.write(img)
-        
-        # Release resources
-        out.release()
+
     
     def is_loaded(self) -> bool:
         """Check if the model is loaded."""

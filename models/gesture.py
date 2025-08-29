@@ -82,10 +82,24 @@ class GestureModel(BaseModel):
             self.load_model()
         
         try:
-            # In a real implementation, this would generate gesture parameters
-            # For now, return a dummy array
-            num_frames = int((duration or 5.0) * 30)  # Default to 5 seconds at 30fps
-            return np.zeros((num_frames, 64))  # Dummy gesture parameters
+            # Use the actual gesture generator
+            from awesome_gesture_generation import GestureGenerator as _GestureGenerator
+            
+            generator = _GestureGenerator(
+                model_path=config.get('gesture.model_path', 'models/gesture'),
+                device=self.device,
+                style=style or 'casual',
+                intensity=intensity or 0.7
+            )
+            
+            gestures = generator.generate_gestures(
+                text=text,
+                duration=duration or 5.0,
+                emotion=kwargs.get('emotion', 'neutral'),
+                intensity=intensity or 0.7
+            )
+            
+            return gestures
             
         except Exception as e:
             raise RuntimeError(f"Failed to generate gestures: {e}")
@@ -114,26 +128,51 @@ class GestureModel(BaseModel):
         try:
             # Set up output path
             if output_path is None:
-                output_dir = config['paths.output']
+                output_dir = config.get('paths.output', 'output')
                 os.makedirs(output_dir, exist_ok=True)
                 output_path = os.path.join(
                     output_dir,
                     f"gesture_{os.path.basename(video_path)}"
                 )
             
-            # For now, just copy the input video as a placeholder
-            # In a real implementation, this would add gestures to the video
-            self._create_dummy_video(video_path, output_path)
+            # Generate gestures
+            gestures = self.generate_gestures(text, **kwargs)
+            
+            # Apply gestures to video (simplified implementation)
+            cap = cv2.VideoCapture(video_path)
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            
+            frame_idx = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                # Apply gesture transformations (simplified)
+                if frame_idx < len(gestures):
+                    gesture = gestures[frame_idx]
+                    # Apply basic transformations based on gesture parameters
+                    if abs(gesture[0]) > 0.01:  # Head movement
+                        shift_x = int(gesture[0] * 10)
+                        frame = np.roll(frame, shift_x, axis=1)
+                
+                out.write(frame)
+                frame_idx += 1
+            
+            cap.release()
+            out.release()
             
             return output_path
             
         except Exception as e:
             raise RuntimeError(f"Failed to add gestures to video: {e}")
     
-    def _create_dummy_video(self, input_path: str, output_path: str) -> None:
-        """Create a dummy video (for testing)."""
-        import shutil
-        shutil.copy2(input_path, output_path)
+
     
     def is_loaded(self) -> bool:
         """Check if the model is loaded."""

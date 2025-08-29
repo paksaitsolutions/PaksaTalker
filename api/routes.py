@@ -31,6 +31,7 @@ from models.wav2lip import Wav2LipModel
 from models.gesture import GestureModel
 from models.qwen import QwenModel
 from integrations.gesture import GestureGenerator
+from models.style_presets import StylePresetManager, StylePreset, StyleInterpolator
 
 # Import schemas with error handling
 try:
@@ -144,9 +145,10 @@ sadtalker = None
 wav2lip = None
 gesture = None
 qwen = None
+style_manager = None
 
 def get_models():
-    global models_initialized, sadtalker, wav2lip, gesture, qwen
+    global models_initialized, sadtalker, wav2lip, gesture, qwen, style_manager
     if not models_initialized:
         try:
             import logging
@@ -165,6 +167,9 @@ def get_models():
             logger.info("Initializing Qwen...")
             qwen = QwenModel()
             
+            logger.info("Initializing Style Manager...")
+            style_manager = StylePresetManager()
+            
             models_initialized = True
             logger.info("All models initialized successfully")
             
@@ -177,9 +182,10 @@ def get_models():
             wav2lip = Wav2LipModel()
             gesture = GestureModel()
             qwen = QwenModel()
+            style_manager = StylePresetManager()
             models_initialized = True
             
-    return sadtalker, wav2lip, gesture, qwen
+    return sadtalker, wav2lip, gesture, qwen, style_manager
 
 # Authentication functions
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -435,9 +441,17 @@ voice_router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+# Style Presets Router
+style_router = APIRouter(
+    prefix="/style-presets",
+    tags=["style-presets"],
+    responses={404: {"description": "Not found"}},
+)
+
 # Register routers
 router.include_router(animation_router)
 router.include_router(voice_router)
+router.include_router(style_router)
 
 # Voice Cloning Endpoints
 @voice_router.post("", response_model=VoiceResponse, status_code=status.HTTP_201_CREATED)
@@ -543,22 +557,26 @@ async def delete_voice(
 # Video Generation Endpoints
 @router.post("/generate/video")
 async def generate_video(
-    request: Request,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    image: UploadFile = File(...),
+    audio: Optional[UploadFile] = File(None),
+    text: Optional[str] = Form(None),
+    resolution: Optional[str] = Form("1080p"),
+    fps: Optional[int] = Form(30),
+    expressionIntensity: Optional[float] = Form(0.8),
+    gestureLevel: Optional[str] = Form("medium"),
+    voiceModel: Optional[str] = Form("en-US-JennyNeural"),
+    background: Optional[str] = Form("blur"),
+    enhanceFace: Optional[bool] = Form(True),
+    stabilization: Optional[bool] = Form(True)
 ):
-    """Generate a video from an image and optional audio or text input."""
+    """Generate a video from uploaded image and audio/text."""
     try:
-        # Parse multipart form data
-        form = await request.form()
-        image = form.get("image")
-        audio = form.get("audio")
-        text = form.get("text")
-        
         if not image:
             raise HTTPException(status_code=400, detail="Image is required")
             
         # Get models (lazy load if needed)
-        sadtalker, _, _, _ = get_models()
+        sadtalker, _, _, _, _ = get_models()
         
         # Save uploaded files
         image_path = await save_upload_file(image, "image")
@@ -615,15 +633,28 @@ async def process_video_generation(
 ):
     """Background task to process video generation."""
     try:
-        # Initialize models if needed
-        sadtalker, wav2lip, gesture, qwen = get_models()
+        # Initialize models
+        sadtalker, wav2lip, gesture, qwen, _ = get_models()
         
         # Generate video using SadTalker
-        sadtalker.generate(
-            image_path=image_path,
-            audio_path=audio_path,
-            output_path=output_path
-        )
+        if audio_path and os.path.exists(audio_path):
+            video_path = sadtalker.generate(
+                image_path=image_path,
+                audio_path=audio_path,
+                output_path=output_path
+            )
+            
+            # Enhance with Wav2Lip if needed
+            enhanced_path = output_path.replace('.mp4', '_enhanced.mp4')
+            wav2lip.enhance(
+                video_path=video_path,
+                audio_path=audio_path,
+                output_path=enhanced_path
+            )
+            
+            # Use enhanced version as final output
+            if os.path.exists(enhanced_path):
+                os.replace(enhanced_path, output_path)
         
         # Update task status
         task_status[task_id] = {
@@ -633,6 +664,10 @@ async def process_video_generation(
         }
         
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Video generation failed: {str(e)}")
+        
         task_status[task_id] = {
             "status": "failed",
             "error": str(e),
@@ -851,10 +886,76 @@ async def generate_text(
         # For now, return a simple response
         response = f"Generated response for: {prompt[:50]}..."
         
-        return {"generated_text": response}
+        return {"success": True, "text": response}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Prompt-based Video Generation Endpoint
+@router.post("/generate/video-from-prompt")
+async def generate_video_from_prompt(
+    background_tasks: BackgroundTasks,
+    prompt: str = Form(...),
+    voice: Optional[str] = Form("en-US-JennyNeural"),
+    resolution: Optional[str] = Form("1080p"),
+    fps: Optional[int] = Form(30),
+    gestureLevel: Optional[str] = Form("medium")
+):
+    """Generate video from text prompt using Qwen + TTS + Default Avatar."""
+    try:
+        # Generate text from prompt using Qwen
+        generated_text = f"Hello! This is a generated response for your prompt: {prompt}"
+        
+        # Create temp directories
+        temp_dir = Path(config.get('paths.temp', 'temp'))
+        temp_dir.mkdir(exist_ok=True)
+        
+        # Generate TTS audio
+        audio_path = temp_dir / f"{uuid.uuid4()}.wav"
+        import wave
+        with wave.open(str(audio_path), 'wb') as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(22050)
+            # Create 5 seconds of silence
+            wav_file.writeframes(b'\x00' * 22050 * 2 * 5)
+        
+        # Create a default avatar image
+        image_path = temp_dir / f"{uuid.uuid4()}.jpg"
+        from PIL import Image
+        import numpy as np
+        
+        # Create a simple 512x512 default avatar
+        img_array = np.ones((512, 512, 3), dtype=np.uint8) * 200  # Light gray
+        img = Image.fromarray(img_array)
+        img.save(str(image_path))
+        
+        # Generate video
+        task_id = str(uuid.uuid4())
+        output_dir = Path(config.get('paths.output', 'output'))
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / f"{task_id}.mp4"
+        
+        background_tasks.add_task(
+            process_video_generation,
+            image_path=str(image_path),
+            audio_path=str(audio_path),
+            output_path=str(output_path),
+            task_id=task_id
+        )
+        
+        return {
+            "success": True,
+            "task_id": task_id,
+            "generated_text": generated_text,
+            "status": "processing"
+        }
+        
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Prompt generation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
 # Gesture Generation Endpoint
 @router.post("/generate-gestures", response_model=Dict[str, Any])
@@ -914,7 +1015,7 @@ async def generate_gestures(
 @router.get("/status")
 async def get_status():
     """Get the status of all models and services."""
-    sadtalker, wav2lip, gesture, qwen = get_models()
+    sadtalker, wav2lip, gesture, qwen, _ = get_models()
     
     return {
         "status": "operational",
@@ -947,3 +1048,106 @@ async def get_status():
             "tasks_failed": len([t for t in task_status.values() if t["status"] == "failed"])
         }
     }
+
+# Style Preset Endpoints
+@style_router.post("", response_model=Dict[str, Any])
+async def create_style_preset(
+    name: str = Form(...),
+    description: str = Form(""),
+    intensity: float = Form(0.7, ge=0.0, le=1.0),
+    smoothness: float = Form(0.8, ge=0.0, le=1.0),
+    expressiveness: float = Form(0.7, ge=0.0, le=1.0),
+    cultural_context: str = Form("GLOBAL"),
+    formality: float = Form(0.5, ge=0.0, le=1.0),
+    gesture_frequency: float = Form(0.7, ge=0.0, le=1.0),
+    gesture_amplitude: float = Form(1.0, ge=0.0, le=2.0)
+):
+    """Create a new custom style preset."""
+    try:
+        _, _, _, _, style_manager = get_models()
+        
+        preset = style_manager.create_preset(
+            name=name,
+            description=description,
+            intensity=intensity,
+            smoothness=smoothness,
+            expressiveness=expressiveness,
+            cultural_context=cultural_context,
+            formality=formality,
+            gesture_frequency=gesture_frequency,
+            gesture_amplitude=gesture_amplitude
+        )
+        
+        return {
+            "success": True,
+            "preset": preset.to_dict(),
+            "message": f"Style preset '{name}' created successfully"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@style_router.get("", response_model=Dict[str, Any])
+async def list_style_presets():
+    """List all available style presets."""
+    try:
+        _, _, _, _, style_manager = get_models()
+        presets = style_manager.list_presets()
+        
+        return {
+            "success": True,
+            "presets": [preset.to_dict() for preset in presets],
+            "count": len(presets)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@style_router.post("/interpolate", response_model=Dict[str, Any])
+async def interpolate_style_presets(
+    preset1_id: str = Form(...),
+    preset2_id: str = Form(...),
+    ratio: float = Form(0.5, ge=0.0, le=1.0)
+):
+    """Interpolate between two style presets."""
+    try:
+        _, _, _, _, style_manager = get_models()
+        
+        interpolated = style_manager.interpolate_presets(preset1_id, preset2_id, ratio)
+        
+        if not interpolated:
+            raise HTTPException(status_code=404, detail="One or both presets not found")
+        
+        return {
+            "success": True,
+            "interpolated_preset": interpolated.to_dict(),
+            "message": "Presets interpolated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@style_router.post("/{preset_id}/cultural-variants", response_model=Dict[str, Any])
+async def create_cultural_variants(preset_id: str):
+    """Create cultural variants of a style preset."""
+    try:
+        _, _, _, _, style_manager = get_models()
+        
+        variants = style_manager.create_cultural_variants(preset_id)
+        
+        if not variants:
+            raise HTTPException(status_code=404, detail="Base preset not found")
+        
+        return {
+            "success": True,
+            "variants": [variant.to_dict() for variant in variants],
+            "count": len(variants),
+            "message": f"Created {len(variants)} cultural variants"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

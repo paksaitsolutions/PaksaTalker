@@ -109,26 +109,34 @@ class Wav2LipModel(BaseModel):
         try:
             # Set up output path
             if output_path is None:
-                output_dir = config['paths.output']
+                output_dir = config.get('paths.output', 'output')
                 os.makedirs(output_dir, exist_ok=True)
                 output_path = os.path.join(
                     output_dir,
                     f"wav2lip_{os.path.basename(video_path)}"
                 )
             
-            # For now, just copy the input video as a placeholder
-            # In a real implementation, this would run the actual Wav2Lip model
-            self._create_dummy_video(video_path, output_path)
+            # Use the actual Wav2Lip implementation
+            from src.wav2lip.inference import Wav2Lip as _Wav2Lip
             
-            return output_path
+            wav2lip = _Wav2Lip(
+                checkpoint_path=config.get('wav2lip.checkpoint_path', 'models/wav2lip/wav2lip.pth'),
+                device=self.device
+            )
+            
+            result_path = wav2lip.inference(
+                face=video_path,
+                audio=audio_path,
+                outfile=output_path,
+                **kwargs
+            )
+            
+            return result_path
             
         except Exception as e:
             raise RuntimeError(f"Failed to enhance video: {e}")
     
-    def _create_dummy_video(self, input_path: str, output_path: str) -> None:
-        """Create a dummy video (for testing)."""
-        import shutil
-        shutil.copy2(input_path, output_path)
+
     
     def is_loaded(self) -> bool:
         """Check if the model is loaded."""

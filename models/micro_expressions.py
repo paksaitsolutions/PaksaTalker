@@ -36,7 +36,8 @@ MICRO_EXPRESSION_TYPES = {
 
 @dataclass
 class MicroExpressionState:
-    """Current state of micro-expressions."""n    active: bool = False
+    """Current state of micro-expressions."""
+    active: bool = False
     start_time: float = 0.0
     duration: float = 0.0
     expression_type: str = ""

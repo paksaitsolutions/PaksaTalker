@@ -7,7 +7,35 @@ from enum import Enum, auto
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+try:
+    from scipy.spatial.transform import Rotation as R
+except ImportError:
+    # Fallback rotation implementation
+    class R:
+        @staticmethod
+        def from_euler(seq, angles, degrees=False):
+            return FallbackRotation(angles)
+        
+        @staticmethod
+        def from_quat(quat):
+            return FallbackRotation(quat)
+    
+    class FallbackRotation:
+        def __init__(self, data):
+            self.data = np.atleast_1d(data)
+        
+        def as_quat(self):
+            if len(self.data) == 4:
+                return self.data
+            # Simple euler to quaternion conversion
+            return np.array([0, 0, 0, 1])
+        
+        def slerp(self, other, t):
+            # Simple linear interpolation fallback
+            return FallbackRotation(self.data * (1-t) + other.data * t)
+        
+        def __mul__(self, other):
+            return FallbackRotation(self.data)
 
 class HandSide(Enum):
     LEFT = auto()

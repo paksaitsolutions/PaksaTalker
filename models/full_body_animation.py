@@ -7,7 +7,35 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+try:
+    from scipy.spatial.transform import Rotation as R
+except ImportError:
+    # Fallback rotation implementation
+    class R:
+        @staticmethod
+        def from_euler(seq, angles, degrees=False):
+            return FallbackRotation(angles)
+        
+        @staticmethod
+        def from_quat(quat):
+            return FallbackRotation(quat)
+    
+    class FallbackRotation:
+        def __init__(self, data):
+            self.data = np.atleast_1d(data)
+        
+        def as_quat(self):
+            if len(self.data) == 4:
+                return self.data
+            # Simple euler to quaternion conversion
+            return np.array([0, 0, 0, 1])
+        
+        def slerp(self, other, t):
+            # Simple linear interpolation fallback
+            return FallbackRotation(self.data * (1-t) + other.data * t)
+        
+        def __mul__(self, other):
+            return FallbackRotation(self.data)
 
 class StanceType(Enum):
     """Types of character stances."""
@@ -128,7 +156,7 @@ class FullBodyAnimator:
         
         # Update weights
         self.left_foot.weight += self.weight_shift_velocity * delta_time
-        self.right_foot.weight = 1.0 - self.left_foot_weight
+        self.right_foot.weight = 1.0 - self.left_foot.weight
         
         # Update weight shift magnitude (for animation)
         self.weight_shift_magnitude = abs(self.left_foot.weight - 0.5) * 2.0
@@ -355,20 +383,16 @@ class FullBodyAnimator:
                 else:  # Lowering phase
                     t = (self.step_phase - 0.25) * 4.0
                     height = np.sin((1.0 - t) * np.pi) * self.step_height * 0.5
-                    foot_obj.position = np.lerp(
-                        foot_obj.position, 
-                        self.step_targets[foot], 
-                        delta_time * 10.0  # Smooth interpolation
-                    )
+                    # Linear interpolation (lerp)
+                    t = min(1.0, delta_time * 10.0)
+                    foot_obj.position = foot_obj.position * (1 - t) + self.step_targets[foot] * t
                     foot_obj.position[1] = height
             else:
                 # Non-stepping foot maintains position
                 foot_obj = getattr(self, f'{foot}_foot')
-                foot_obj.position = np.lerp(
-                    foot_obj.position,
-                    self.step_targets[foot],
-                    delta_time * 5.0  # Slightly slower follow
-                )
+                # Linear interpolation (lerp)
+                t = min(1.0, delta_time * 5.0)
+                foot_obj.position = foot_obj.position * (1 - t) + self.step_targets[foot] * t
                 
         # Update foot rotations based on movement direction
         if np.linalg.norm(desired_velocity) > 0.1:

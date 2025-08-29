@@ -240,11 +240,11 @@ CUDA_VISIBLE_DEVICES=0 uvicorn app:app --reload
   - [x] Sign language support
 
 #### Style Customization
-- [ ] Gesture style adaptation
-  - [ ] Style transfer
-  - [ ] Speaker-specific mannerisms
-  - [ ] Cultural variations
-  - [ ] Professional vs. casual styles
+- [x] Gesture style adaptation
+  - [x] Style transfer
+  - [x] Speaker-specific mannerisms
+  - [x] Cultural variations
+  - [x] Professional vs. casual styles
 
 ### 3. Qwen Language Model Integration
 

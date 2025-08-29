@@ -99,9 +99,10 @@ EMOTIONAL_PRESETS = {
 
 @dataclass
 class BreathingState:
-    """Current state of the breathing simulation."""n    phase: float = 0.0                  # Current phase in the breathing cycle (0 to 2π)
+    """Current state of the breathing simulation."""
+    phase: float = 0.0                  # Current phase in the breathing cycle (0 to 2π)
     time: float = 0.0                   # Current simulation time
-    last_update: float = field(default_factory=time.time)  # Time of last update
+    last_update: float = field(default_factory=lambda: time.time())  # Time of last update
     
     # Current parameters (with variations applied)
     current_rate: float = 0.0
