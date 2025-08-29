@@ -1,70 +1,115 @@
-const API_BASE_URL = '/api/v1'
+const API_BASE_URL = window.location.origin + '/api/v1'
+
+const handleResponse = async (response: Response) => {
+  if (!response.ok) {
+    const text = await response.text()
+    let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+    
+    try {
+      const errorData = JSON.parse(text)
+      errorMessage = errorData.detail || errorData.message || errorMessage
+    } catch {
+      // If not JSON, use the text as error message
+      errorMessage = text || errorMessage
+    }
+    
+    throw new Error(errorMessage)
+  }
+  
+  const contentType = response.headers.get('content-type')
+  if (contentType && contentType.includes('application/json')) {
+    return response.json()
+  }
+  
+  throw new Error('Expected JSON response but got: ' + contentType)
+}
 
 export const generateVideo = async (formData: FormData) => {
-  const response = await fetch(`${API_BASE_URL}/generate/video`, {
-    method: 'POST',
-    body: formData
-  })
-  const data = await response.json()
-  return { ...data, ok: response.ok }
+  try {
+    const response = await fetch(`${API_BASE_URL}/generate/video`, {
+      method: 'POST',
+      body: formData
+    })
+    const data = await handleResponse(response)
+    return { ...data, ok: response.ok }
+  } catch (error) {
+    console.error('Generate video error:', error)
+    throw error
+  }
 }
 
 export const getTaskStatus = async (taskId: string) => {
   try {
-    const response = await axios.get(`${API_BASE_URL}/status/${taskId}`)
-    return response.data
+    const response = await fetch(`${API_BASE_URL}/status/${taskId}`)
+    return handleResponse(response)
   } catch (error) {
+    console.error('Get task status error:', error)
     throw error
   }
 }
 
 export const generateText = async (prompt: string) => {
-  const formData = new FormData()
-  formData.append('prompt', prompt)
-  formData.append('max_length', '100')
-  formData.append('temperature', '0.7')
-  
-  const response = await fetch(`${API_BASE_URL}/generate/text`, {
-    method: 'POST',
-    body: formData
-  })
-  return response.json()
+  try {
+    const formData = new FormData()
+    formData.append('prompt', prompt)
+    formData.append('max_length', '100')
+    formData.append('temperature', '0.7')
+    
+    const response = await fetch(`${API_BASE_URL}/generate/text`, {
+      method: 'POST',
+      body: formData
+    })
+    return handleResponse(response)
+  } catch (error) {
+    console.error('Generate text error:', error)
+    throw error
+  }
 }
 
 export const registerSpeaker = async (formData: FormData) => {
   try {
-    const response = await axios.post(`${API_BASE_URL}/speakers/register`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
+    const response = await fetch(`${API_BASE_URL}/speakers/register`, {
+      method: 'POST',
+      body: formData
     })
-    return response.data
+    return handleResponse(response)
   } catch (error) {
+    console.error('Register speaker error:', error)
     throw error
   }
 }
 
 export const generateGestures = async (text: string, emotion: string) => {
-  const formData = new FormData()
-  formData.append('text', text)
-  formData.append('emotion', emotion)
-  formData.append('intensity', '0.7')
-  formData.append('duration', '5.0')
-  
-  const response = await fetch(`${API_BASE_URL}/generate-gestures`, {
-    method: 'POST',
-    body: formData
-  })
-  return response.json()
+  try {
+    const formData = new FormData()
+    formData.append('text', text)
+    formData.append('emotion', emotion)
+    formData.append('intensity', '0.7')
+    formData.append('duration', '5.0')
+    
+    const response = await fetch(`${API_BASE_URL}/generate-gestures`, {
+      method: 'POST',
+      body: formData
+    })
+    return handleResponse(response)
+  } catch (error) {
+    console.error('Generate gestures error:', error)
+    throw error
+  }
 }
 
 export const generateVideoFromPrompt = async (formData: FormData) => {
-  const response = await fetch(`${API_BASE_URL}/generate/video-from-prompt`, {
-    method: 'POST',
-    body: formData
-  })
-  const data = await response.json()
-  return { ...data, ok: response.ok }
+  try {
+    const response = await fetch(`${API_BASE_URL}/generate/video-from-prompt`, {
+      method: 'POST',
+      body: formData
+    })
+    const data = await handleResponse(response)
+    return { ...data, ok: response.ok }
+  } catch (error) {
+    console.error('Generate video from prompt error:', error)
+    throw error
+  }
 }
 
 // Style Preset API functions

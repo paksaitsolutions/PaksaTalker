@@ -85,7 +85,9 @@ function App() {
         }
         
         Object.entries(settings).forEach(([key, value]) => {
-          formData.append(key, value.toString())
+          if (value !== null && value !== undefined) {
+            formData.append(key, value.toString())
+          }
         })
         
         data = await generateVideo(formData)
@@ -114,22 +116,23 @@ function App() {
   }
 
   const pollTaskStatus = async (taskId: string) => {
-    const maxAttempts = 60
+    const maxAttempts = 600  // 50 minutes timeout (600 * 5 seconds)
     let attempts = 0
     
     const poll = async () => {
       try {
-        const response = await axios.get(`/api/v1/status/${taskId}`)
+        const response = await fetch(`/api/v1/status/${taskId}`)
+        const data = await response.json()
         
-        if (response.data.success && response.data.data) {
-          const { status } = response.data.data
+        if (data.success && data.data) {
+          const { status } = data.data
           
           if (status === 'completed') {
             setProgress({
               status: 'completed',
               progress: 100,
               stage: 'Video generated successfully!',
-              videoUrl: response.data.data.video_url
+              videoUrl: data.data.video_url
             })
             return
           } else if (status === 'failed') {
@@ -142,11 +145,12 @@ function App() {
             return
           }
           
-          const progressValue = Math.min(30 + (attempts * 2), 95)
+          const progressValue = Math.min(30 + (attempts * 0.1), 95)  // Slower progress increase
+          const timeElapsed = Math.floor((attempts * 5) / 60)  // Minutes elapsed
           setProgress({
             status: 'processing',
             progress: progressValue,
-            stage: 'Generating video...',
+            stage: `Generating video... (${timeElapsed}m elapsed)`,
             taskId
           })
         }
@@ -159,7 +163,7 @@ function App() {
             status: 'error',
             progress: 0,
             stage: 'Generation timeout',
-            error: 'Generation took too long'
+            error: 'Generation took longer than 50 minutes. Please try with shorter audio or lower resolution.'
           })
         }
       } catch (error) {

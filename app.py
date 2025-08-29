@@ -47,13 +47,16 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp, Scope, Receive, Send
+from werkzeug.utils import secure_filename
 
 from config import config
-from api.schemas import (
+from api.schemas.base import (
     APIStatus,
     ErrorResponse,
     TokenResponse,
-    example_responses,
+    example_responses
+)
+from api.schemas.schemas import (
     VideoInfo,
     TaskStatusResponse
 )
@@ -204,12 +207,31 @@ os.makedirs(config['paths']['temp'], exist_ok=True)
 os.makedirs('static', exist_ok=True)
 os.makedirs('templates', exist_ok=True)
 
+# Import and include routers BEFORE catch-all route
+from api.routes import router as api_router
+app.include_router(api_router, prefix="/api/v1")
+
 # Serve SPA - catch all other routes and return the frontend
 @app.get("/{full_path:path}", include_in_schema=False)
 async def catch_all(full_path: str):
     """Catch all other routes and return the SPA"""
-    if os.path.exists(FRONTEND_DIR / full_path):
-        return FileResponse(FRONTEND_DIR / full_path)
+    
+    # Secure the path to prevent directory traversal
+    if full_path and not full_path.startswith('api/'):
+        # Normalize and secure the path
+        secure_path = secure_filename(full_path)
+        file_path = FRONTEND_DIR / secure_path
+        
+        # Ensure the resolved path is within FRONTEND_DIR
+        try:
+            file_path = file_path.resolve()
+            FRONTEND_DIR.resolve()
+            if file_path.is_relative_to(FRONTEND_DIR.resolve()) and file_path.exists():
+                return FileResponse(file_path)
+        except (OSError, ValueError):
+            pass
+    
+    # Return index.html for SPA routing
     index_path = FRONTEND_DIR / "index.html"
     if not index_path.exists():
         raise HTTPException(
@@ -218,13 +240,7 @@ async def catch_all(full_path: str):
         )
     return FileResponse(index_path)
 
-# Static files are already mounted above
-
-# Import and include routers
-from api.routes import router as api_router
-app.include_router(api_router, prefix="/api/v1")
-
-# Custom docs endpoints
+# Custom docs endpoints  
 @app.get("/api/docs", include_in_schema=False)
 async def custom_swagger_ui_html():
     return get_swagger_ui_html(
@@ -329,11 +345,12 @@ if __name__ == "__main__":
     uvicorn.run(
         "app:app",
         host=config['api']['host'],
-        port=config['api']['port'],
+        port=8080,  # Use port 8080 to avoid conflicts
         reload=config['api']['debug'],
         log_level='debug' if config['api']['debug'] else 'info',
-        workers=config['api']['workers'],
+        workers=1,  # Use single worker to avoid port conflicts
         proxy_headers=True,
         forwarded_allow_ips='*',
-        timeout_keep_alive=30,
+        timeout_keep_alive=300,  # 5 minutes keep-alive
+        timeout_graceful_shutdown=60,  # 1 minute graceful shutdown
     )

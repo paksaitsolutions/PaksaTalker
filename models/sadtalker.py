@@ -11,6 +11,7 @@ from enum import Enum, auto
 
 from .base import BaseModel
 from config import config
+from werkzeug.utils import secure_filename
 
 class SadTalkerModel(BaseModel):
     """SadTalker model for generating talking head videos with emotion control."""
@@ -334,9 +335,10 @@ class SadTalkerModel(BaseModel):
             if output_path is None:
                 output_dir = config.get('paths.output', 'output')
                 os.makedirs(output_dir, exist_ok=True)
+                secure_image_name = secure_filename(os.path.basename(image_path))
                 output_path = os.path.join(
                     output_dir,
-                    f"sadtalker_{os.path.basename(image_path).split('.')[0]}.mp4"
+                    f"sadtalker_{secure_image_name.split('.')[0]}.mp4"
                 )
             
             # Use the actual SadTalker implementation

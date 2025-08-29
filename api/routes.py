@@ -4,7 +4,7 @@ import uuid
 import json
 import time
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import (
@@ -24,6 +24,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
+from werkzeug.utils import secure_filename
 
 from config import config
 from models.sadtalker import SadTalkerModel
@@ -31,11 +32,11 @@ from models.wav2lip import Wav2LipModel
 from models.gesture import GestureModel
 from models.qwen import QwenModel
 from integrations.gesture import GestureGenerator
-from models.style_presets import StylePresetManager, StylePreset, StyleInterpolator
+# from models.style_presets import StylePresetManager, StylePreset, StyleInterpolator
 
 # Import schemas with error handling
 try:
-    from api.schemas.schemas import (
+    from .schemas.schemas import (
         AnimationStyle,
         AnimationStyleCreate,
         AnimationStyleUpdate,
@@ -137,7 +138,7 @@ class UserInDB(User):
     hashed_password: str
 
 # Create router with API versioning
-router = APIRouter(prefix="/api/v1", tags=["api"])
+router = APIRouter(tags=["api"])
 
 # Initialize models (lazy loading)
 models_initialized = False
@@ -168,7 +169,8 @@ def get_models():
             qwen = QwenModel()
             
             logger.info("Initializing Style Manager...")
-            style_manager = StylePresetManager()
+            # style_manager = StylePresetManager()
+            style_manager = "initialized"  # Simple placeholder
             
             models_initialized = True
             logger.info("All models initialized successfully")
@@ -182,7 +184,8 @@ def get_models():
             wav2lip = Wav2LipModel()
             gesture = GestureModel()
             qwen = QwenModel()
-            style_manager = StylePresetManager()
+            # style_manager = StylePresetManager()
+            style_manager = None
             models_initialized = True
             
     return sadtalker, wav2lip, gesture, qwen, style_manager
@@ -210,9 +213,9 @@ def authenticate_user(fake_db, username: str, password: str):
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -244,15 +247,37 @@ async def get_current_active_user(current_user: User = Depends(get_current_user)
 # File handling functions
 async def save_upload_file(upload_file: UploadFile, directory: str) -> str:
     """Save uploaded file to the specified directory."""
-    # Ensure directory exists
-    temp_dir = config.get('paths.temp', 'temp')
+    
+    # Ensure directory exists and is within allowed paths
+    temp_dir = os.path.abspath(config.get('paths.temp', 'temp'))
     if directory == "image":
         directory = temp_dir
     elif directory == "audio":
         directory = temp_dir
     
+    # Ensure directory is within allowed paths
+    directory = os.path.abspath(directory)
+    if not directory.startswith(temp_dir):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid directory path"
+        )
+    
     os.makedirs(directory, exist_ok=True)
-    file_ext = os.path.splitext(upload_file.filename or '')[1] or '.bin'
+    
+    # Secure filename handling
+    original_filename = upload_file.filename or 'upload'
+    secure_name = secure_filename(original_filename)
+    file_ext = os.path.splitext(secure_name)[1] or '.bin'
+    
+    # Validate file extension
+    allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.mp3', '.wav', '.mp4', '.avi'}
+    if file_ext.lower() not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type {file_ext} not allowed"
+        )
+    
     file_name = f"{uuid.uuid4()}{file_ext}"
     file_path = os.path.join(directory, file_name)
     
@@ -269,23 +294,22 @@ async def save_upload_file(upload_file: UploadFile, directory: str) -> str:
 
 # Authentication Endpoints
 @router.post("/auth/login")
-async def login_for_access_token(request: Request):
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     try:
-        data = await request.json()
-        username = data.get('email')  # Frontend sends email as username
-        password = data.get('password')
+        username = form_data.username
+        password = form_data.password
         
         if not username or not password:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email and password are required"
+                detail="Username and password are required"
             )
             
         user = authenticate_user(fake_users_db, username, password)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
+                detail="Incorrect username or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
             
@@ -348,8 +372,8 @@ async def create_animation_style(
             name=style.name,
             description=style.description,
             parameters=style.parameters,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
         )
         return created_style
     except Exception as e:
@@ -386,8 +410,8 @@ async def get_animation_style(
             name="Default Style",
             description="Default animation style",
             parameters={"intensity": 0.7},
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
         )
     raise HTTPException(status_code=404, detail="Style not found")
 
@@ -406,8 +430,8 @@ async def update_animation_style(
         name=style_update.name or "Default Style",
         description=style_update.description or "Default animation style",
         parameters=style_update.parameters or {"intensity": 0.7},
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
     )
 
 @animation_router.delete("/{style_id}")
@@ -430,8 +454,8 @@ async def get_default_speaker_style(
         name="Default Style",
         description="Default animation style",
         parameters={"intensity": 0.7},
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
     )
 
 # Voice Router
@@ -496,8 +520,8 @@ async def create_voice(
         return VoiceResponse(
             voice_id=voice_id or str(uuid.uuid4()),
             speaker_name=speaker_name,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             metadata=metadata_dict
         )
 
@@ -511,8 +535,8 @@ async def list_voices(
         VoiceResponse(
             voice_id="default",
             speaker_name="Default Speaker",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             metadata={}
         )
     ]
@@ -531,8 +555,8 @@ async def get_voice(
         return VoiceResponse(
             voice_id="default",
             speaker_name="Default Speaker",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
             metadata={}
         )
     
@@ -660,7 +684,7 @@ async def process_video_generation(
         task_status[task_id] = {
             "status": "completed",
             "result_path": output_path,
-            "completed_at": datetime.utcnow().isoformat()
+            "completed_at": datetime.now(timezone.utc).isoformat()
         }
         
     except Exception as e:
@@ -671,7 +695,7 @@ async def process_video_generation(
         task_status[task_id] = {
             "status": "failed",
             "error": str(e),
-            "failed_at": datetime.utcnow().isoformat()
+            "failed_at": datetime.now(timezone.utc).isoformat()
         }
 
 # Task status tracking
@@ -782,8 +806,8 @@ async def get_speaker(
         # Return dummy speaker info for now
         return SpeakerInfo(
             speaker_id=speaker_id,
-            created_at=datetime.utcnow(),
-            last_updated=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            last_updated=datetime.now(timezone.utc),
             metadata={},
             num_recordings=0,
             embedding_shape=None
@@ -1019,7 +1043,7 @@ async def get_status():
     
     return {
         "status": "operational",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "models": {
             "sadtalker": {
                 "loaded": sadtalker.is_loaded() if sadtalker else False,
@@ -1049,6 +1073,52 @@ async def get_status():
         }
     }
 
+# In-memory style preset storage
+style_presets = {
+    "professional": {
+        "preset_id": "professional",
+        "name": "Professional",
+        "description": "Formal business presentation style",
+        "intensity": 0.6,
+        "smoothness": 0.9,
+        "expressiveness": 0.5,
+        "cultural_context": "GLOBAL",
+        "formality": 0.9,
+        "gesture_frequency": 0.4,
+        "gesture_amplitude": 0.8,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    },
+    "casual": {
+        "preset_id": "casual",
+        "name": "Casual",
+        "description": "Relaxed conversational style",
+        "intensity": 0.7,
+        "smoothness": 0.7,
+        "expressiveness": 0.8,
+        "cultural_context": "GLOBAL",
+        "formality": 0.3,
+        "gesture_frequency": 0.8,
+        "gesture_amplitude": 1.2,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    },
+    "enthusiastic": {
+        "preset_id": "enthusiastic",
+        "name": "Enthusiastic",
+        "description": "High-energy presentation style",
+        "intensity": 0.9,
+        "smoothness": 0.6,
+        "expressiveness": 0.9,
+        "cultural_context": "GLOBAL",
+        "formality": 0.5,
+        "gesture_frequency": 0.9,
+        "gesture_amplitude": 1.5,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+}
+
 # Style Preset Endpoints
 @style_router.post("", response_model=Dict[str, Any])
 async def create_style_preset(
@@ -1064,23 +1134,27 @@ async def create_style_preset(
 ):
     """Create a new custom style preset."""
     try:
-        _, _, _, _, style_manager = get_models()
+        preset_id = str(uuid.uuid4())
+        preset = {
+            "preset_id": preset_id,
+            "name": name,
+            "description": description,
+            "intensity": intensity,
+            "smoothness": smoothness,
+            "expressiveness": expressiveness,
+            "cultural_context": cultural_context,
+            "formality": formality,
+            "gesture_frequency": gesture_frequency,
+            "gesture_amplitude": gesture_amplitude,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
         
-        preset = style_manager.create_preset(
-            name=name,
-            description=description,
-            intensity=intensity,
-            smoothness=smoothness,
-            expressiveness=expressiveness,
-            cultural_context=cultural_context,
-            formality=formality,
-            gesture_frequency=gesture_frequency,
-            gesture_amplitude=gesture_amplitude
-        )
+        style_presets[preset_id] = preset
         
         return {
             "success": True,
-            "preset": preset.to_dict(),
+            "preset": preset,
             "message": f"Style preset '{name}' created successfully"
         }
         
@@ -1091,13 +1165,10 @@ async def create_style_preset(
 async def list_style_presets():
     """List all available style presets."""
     try:
-        _, _, _, _, style_manager = get_models()
-        presets = style_manager.list_presets()
-        
         return {
             "success": True,
-            "presets": [preset.to_dict() for preset in presets],
-            "count": len(presets)
+            "presets": list(style_presets.values()),
+            "count": len(style_presets)
         }
         
     except Exception as e:
@@ -1111,16 +1182,31 @@ async def interpolate_style_presets(
 ):
     """Interpolate between two style presets."""
     try:
-        _, _, _, _, style_manager = get_models()
-        
-        interpolated = style_manager.interpolate_presets(preset1_id, preset2_id, ratio)
-        
-        if not interpolated:
+        if preset1_id not in style_presets or preset2_id not in style_presets:
             raise HTTPException(status_code=404, detail="One or both presets not found")
+        
+        preset1 = style_presets[preset1_id]
+        preset2 = style_presets[preset2_id]
+        
+        # Interpolate numeric values
+        interpolated = {
+            "preset_id": str(uuid.uuid4()),
+            "name": f"{preset1['name']} + {preset2['name']} ({ratio:.1f})",
+            "description": f"Interpolated between {preset1['name']} and {preset2['name']}",
+            "intensity": preset1["intensity"] * (1 - ratio) + preset2["intensity"] * ratio,
+            "smoothness": preset1["smoothness"] * (1 - ratio) + preset2["smoothness"] * ratio,
+            "expressiveness": preset1["expressiveness"] * (1 - ratio) + preset2["expressiveness"] * ratio,
+            "cultural_context": preset1["cultural_context"] if ratio < 0.5 else preset2["cultural_context"],
+            "formality": preset1["formality"] * (1 - ratio) + preset2["formality"] * ratio,
+            "gesture_frequency": preset1["gesture_frequency"] * (1 - ratio) + preset2["gesture_frequency"] * ratio,
+            "gesture_amplitude": preset1["gesture_amplitude"] * (1 - ratio) + preset2["gesture_amplitude"] * ratio,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
         
         return {
             "success": True,
-            "interpolated_preset": interpolated.to_dict(),
+            "interpolated_preset": interpolated,
             "message": "Presets interpolated successfully"
         }
         
@@ -1133,16 +1219,40 @@ async def interpolate_style_presets(
 async def create_cultural_variants(preset_id: str):
     """Create cultural variants of a style preset."""
     try:
-        _, _, _, _, style_manager = get_models()
-        
-        variants = style_manager.create_cultural_variants(preset_id)
-        
-        if not variants:
+        if preset_id not in style_presets:
             raise HTTPException(status_code=404, detail="Base preset not found")
+        
+        base_preset = style_presets[preset_id]
+        cultural_contexts = ["WESTERN", "EAST_ASIAN", "MIDDLE_EASTERN", "SOUTH_ASIAN", "LATIN_AMERICAN", "AFRICAN"]
+        variants = []
+        
+        for context in cultural_contexts:
+            if context != base_preset["cultural_context"]:
+                variant_id = str(uuid.uuid4())
+                variant = base_preset.copy()
+                variant.update({
+                    "preset_id": variant_id,
+                    "name": f"{base_preset['name']} ({context})",
+                    "description": f"{base_preset['description']} - {context} variant",
+                    "cultural_context": context,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                })
+                
+                # Slight variations based on cultural context
+                if context == "EAST_ASIAN":
+                    variant["formality"] = min(1.0, variant["formality"] + 0.1)
+                    variant["gesture_frequency"] = max(0.0, variant["gesture_frequency"] - 0.1)
+                elif context == "LATIN_AMERICAN":
+                    variant["expressiveness"] = min(1.0, variant["expressiveness"] + 0.1)
+                    variant["gesture_amplitude"] = min(2.0, variant["gesture_amplitude"] + 0.2)
+                
+                style_presets[variant_id] = variant
+                variants.append(variant)
         
         return {
             "success": True,
-            "variants": [variant.to_dict() for variant in variants],
+            "variants": variants,
             "count": len(variants),
             "message": f"Created {len(variants)} cultural variants"
         }
