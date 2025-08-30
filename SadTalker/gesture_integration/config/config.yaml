@@ -1,0 +1,31 @@
+# Integration Configuration
+
+# Paths
+paths:
+  sadtalker_root: "D:/SadTalker"
+  stylegestures_root: "D:/SadTalker/awesome-gesture_generation/approach/data-driven/StyleGestures"
+  output_dir: "data/output"
+  temp_dir: "data/temp"
+
+# Model Parameters
+sadtalker:
+  checkpoint: "checkpoints/SadTalker_V0.0.2_256.safetensors"
+  still: true
+  preprocess: "full"
+  pose_style: 0
+  size: 512
+  face3dvis: false
+  expression_scale: 1.0
+  input_yaw: null
+  input_pitch: null
+  input_roll: null
+  enhancer: "gfpgan"
+  background_enhancer: "realesrgan"
+  up_scale: 2
+  cpu: false
+
+stylegestures:
+  model_path: "path/to/stylegestures/checkpoint.pt"
+  device: "cpu"  # Will be overridden based on availability
+  style: "neutral"  # neutral, excited, calm, etc.
+  intensity: 0.5    # 0.0 to 1.0

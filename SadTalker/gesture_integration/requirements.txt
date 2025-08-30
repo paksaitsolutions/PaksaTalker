@@ -1,0 +1,36 @@
+# Core dependencies
+torch>=1.13.0
+torchvision>=0.14.0
+torchaudio>=0.13.0
+numpy>=1.23.5
+pyyaml>=6.0
+tqdm>=4.65.0
+opencv-python>=4.7.0
+scipy>=1.10.0
+librosa>=0.10.0
+soundfile>=0.12.1
+
+# SadTalker dependencies
+facexlib>=0.3.0
+basicsr>=1.4.2
+face-alignment>=1.3.5
+ffmpeg-python>=0.2.0
+filterpy>=1.4.5
+imageio>=2.22.0
+imageio-ffmpeg>=0.4.7
+av>=10.0.0
+pydub>=0.25.1
+scikit-image>=0.19.3
+safetensors>=0.3.1
+
+# StyleGestures dependencies (adjust as needed)
+ninja>=1.11.1
+omegaconf>=2.2.3
+hydra-core>=1.3.0
+
+# Development
+torchinfo>=1.7.0
+black>=23.3.0
+isort>=5.12.0
+flake8>=6.0.0
+mypy>=1.3.0

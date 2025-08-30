@@ -1,0 +1,2 @@
+sadtalker_env\Scripts\activate.ps1
+(sadtalker_env) PS D:\SadTalker> python app_sadtalker.py

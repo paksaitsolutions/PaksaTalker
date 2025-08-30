@@ -52,3 +52,6 @@ output/
 # Ignore all .git directories except the root one
 **/.git/
 !/.git/
+# Ignore embedded git repositories
+/EMAGE/
+/PaksaTalker/PaksaTalker/
