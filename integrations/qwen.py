@@ -28,49 +28,16 @@ class QwenIntegration(BaseIntegration):
         '''
         super().__init__(device)
         self.model_name = model_name
-        self.model = None
-        self.tokenizer = None
+        from models.qwen_omni import QwenOmniModel
+        self.qwen_model = QwenOmniModel(model_name, device or "auto")
         self.initialized = False
 
     def load_model(self, **kwargs) -> None:
         '''Load the Qwen model and tokenizer'''
-        if not QWEN_AVAILABLE:
-            raise ImportError("Qwen dependencies not available. Please install transformers and torch.")
-
         if not self.initialized:
             try:
-                # Load tokenizer
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_name,
-                    trust_remote_code=True,
-                    **kwargs.get('tokenizer_kwargs', {})
-                )
-
-                # Load model with appropriate device map
-                device_map = "auto"
-                if self.device == "cuda" and torch.cuda.is_available():
-                    device_map = "cuda"
-                elif self.device == "mps" and torch.backends.mps.is_available():
-                    device_map = "mps"
-
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_name,
-                    device_map=device_map,
-                    trust_remote_code=True,
-                    **{
-                        'torch_dtype': torch.float16 if 'cuda' in device_map else torch.float32,
-                        **kwargs.get('model_kwargs', {})
-                    }
-                )
-
-                # Set generation config
-                self.model.generation_config = GenerationConfig.from_pretrained(
-                    self.model_name,
-                    trust_remote_code=True
-                )
-
+                self.qwen_model.load_model()
                 self.initialized = True
-
             except Exception as e:
                 raise RuntimeError(f"Failed to load Qwen model: {e}")
 
@@ -97,41 +64,13 @@ class QwenIntegration(BaseIntegration):
         if not self.initialized:
             self.load_model()
 
-        try:
-            # Encode the prompt
-            inputs = self.tokenizer(
-                prompt,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=2048  # Adjust based on model's max length
-            )
-
-            # Move inputs to the same device as model
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-
-            # Generate response
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_length=max_length,
-                    temperature=temperature,
-                    top_p=top_p,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    **kwargs
-                )
-
-            # Decode and return the generated text
-            response = self.tokenizer.decode(
-                outputs[0][inputs['input_ids'].shape[1]:],
-                skip_special_tokens=True
-            )
-
-            return response.strip()
-
-        except Exception as e:
-            raise RuntimeError(f"Text generation failed: {e}")
+        return self.qwen_model.generate_text(
+            prompt=prompt,
+            max_length=max_length,
+            temperature=temperature,
+            top_p=top_p,
+            **kwargs
+        )
 
     def enhance_prompt(
         self,
@@ -221,7 +160,7 @@ class QwenIntegration(BaseIntegration):
 
     def is_loaded(self) -> bool:
         '''Check if Qwen is loaded'''
-        return self.initialized and self.model is not None
+        return self.initialized and self.qwen_model.model is not None
 
     def unload(self) -> None:
         '''Unload Qwen and free resources'''

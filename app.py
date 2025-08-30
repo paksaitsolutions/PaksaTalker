@@ -209,7 +209,11 @@ os.makedirs('templates', exist_ok=True)
 
 # Import and include routers BEFORE catch-all route
 from api.routes import router as api_router
+from api.websocket_routes import router as websocket_router
+from api.prompt_endpoints import router as prompt_router
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(prompt_router, prefix="/api/v1")
+app.include_router(websocket_router)
 
 # Serve SPA - catch all other routes and return the frontend
 @app.get("/{full_path:path}", include_in_schema=False)

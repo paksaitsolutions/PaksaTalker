@@ -39,7 +39,9 @@ from models.sadtalker import SadTalkerModel
 from models.wav2lip import Wav2LipModel
 from models.gesture import GestureModel
 from models.qwen import QwenModel
+from models.qwen_omni import get_qwen_model
 from integrations.gesture import GestureGenerator
+import uuid
 # from models.style_presets import StylePresetManager, StylePreset, StyleInterpolator
 
 # Import schemas with error handling
@@ -684,14 +686,13 @@ async def generate_video(
                 wav_file.setframerate(22050)
                 wav_file.writeframes(b'\x00' * 22050 * 2)  # 1 second of silence
         
-        # Generate video
-        video_id = str(uuid.uuid4())
+        # Generate video - use task_id as video_id for consistency
+        task_id = str(uuid.uuid4())
         output_dir = Path(config.get('paths.output', 'output'))
         output_dir.mkdir(exist_ok=True)
-        output_path = output_dir / f"{video_id}.mp4"
+        output_path = output_dir / f"{task_id}.mp4"
         
         # Add task to background
-        task_id = str(uuid.uuid4())
         background_tasks.add_task(
             process_video_generation,
             task_id=task_id,
@@ -704,7 +705,7 @@ async def generate_video(
         return {
             "success": True,
             "task_id": task_id,
-            "video_id": video_id,
+            "video_id": task_id,  # Use same ID for consistency
             "status": "processing"
         }
             
@@ -713,54 +714,139 @@ async def generate_video(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Background task for video processing
+# Background task for video processing with real-time progress
 async def process_video_generation(
     task_id: str,
     image_path: str,
     audio_path: Optional[str],
     output_path: str,
+    resolution: str = "480p",
     **kwargs
 ):
-    """Background task to process video generation."""
+    """Process video generation with real-time progress tracking"""
+    from api.realtime_progress import track_generation_progress
+    
+    # Use real-time progress tracking
+    await track_generation_progress(
+        task_id=task_id,
+        image_path=image_path,
+        audio_path=audio_path,
+        output_path=output_path,
+        settings=kwargs
+    )
+    return
+
+# Legacy function for compatibility
+async def process_video_generation_legacy(
+    task_id: str,
+    image_path: str,
+    audio_path: Optional[str],
+    output_path: str,
+    resolution: str = "480p",
+    **kwargs
+):
+    """Background task to process video generation using SadTalker."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    def update_progress(progress: int, stage: str):
+        """Update task progress in real-time."""
+        task_status[task_id] = {
+            "status": "processing",
+            "progress": progress,
+            "stage": stage,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        logger.info(f"Task {task_id}: {progress}% - {stage}")
+    
     try:
-        # Initialize models
-        sadtalker, wav2lip, gesture, qwen, _ = get_models()
+        # Step 1: Initialize SadTalker model (10%)
+        update_progress(10, "Loading SadTalker model...")
+        sadtalker, _, _, _, _ = get_models()
         
-        # Generate video using SadTalker
-        if audio_path and os.path.exists(audio_path):
-            video_path = sadtalker.generate(
-                image_path=image_path,
-                audio_path=audio_path,
-                output_path=output_path,
-                resolution=kwargs.get('resolution', '480p')
-            )
-            
-            # Enhance with Wav2Lip if needed
-            enhanced_path = output_path.replace('.mp4', '_enhanced.mp4')
-            wav2lip.enhance(
-                video_path=video_path,
-                audio_path=audio_path,
-                output_path=enhanced_path
-            )
-            
-            # Use enhanced version as final output
-            if os.path.exists(enhanced_path):
-                os.replace(enhanced_path, output_path)
+        # Step 2: Validate inputs (20%)
+        update_progress(20, "Validating input files...")
+        if not os.path.exists(image_path):
+            raise Exception("Image file not found")
+        if audio_path and not os.path.exists(audio_path):
+            raise Exception("Audio file not found")
         
-        # Update task status
+        # Step 3: Preprocess image (30%)
+        update_progress(30, "Preprocessing image...")
+        
+        # Step 4: Analyze audio (40%)
+        update_progress(40, "Analyzing audio...")
+        
+        # Step 5: Generate video frames (50-80%)
+        update_progress(50, "Generating video frames...")
+        
+        # Create output directory
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Use actual SadTalker implementation
+        import subprocess
+        import sys
+        
+        # Run SadTalker inference script directly
+        cmd = [
+            sys.executable, 
+            "inference.py",
+            "--driven_audio", audio_path,
+            "--source_image", image_path,
+            "--result_dir", os.path.dirname(output_path),
+            "--still", "--preprocess", "full",
+            "--enhancer", "gfpgan"
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd="SadTalker")
+        
+        if result.returncode != 0:
+            raise Exception(f"SadTalker failed: {result.stderr}")
+        
+        # Find generated video file
+        result_dir = os.path.dirname(output_path)
+        for file in os.listdir(result_dir):
+            if file.endswith('.mp4'):
+                result_path = os.path.join(result_dir, file)
+                # Move to expected output path
+                if result_path != output_path:
+                    os.rename(result_path, output_path)
+                result_path = output_path
+                break
+        else:
+            raise Exception("No video file generated by SadTalker")
+        
+        # Step 6: Post-processing (90%)
+        update_progress(90, "Finalizing video...")
+        
+        # Verify output file exists and is valid
+        if not os.path.exists(result_path):
+            raise Exception("Video generation failed - output file not created")
+        
+        # Check file size (should be more than just headers)
+        file_size = os.path.getsize(result_path)
+        if file_size < 10000:  # Less than 10KB indicates failure
+            raise Exception(f"Video generation failed - output file too small ({file_size} bytes)")
+        
+        # Complete (100%)
         task_status[task_id] = {
             "status": "completed",
-            "result_path": output_path,
+            "progress": 100,
+            "stage": "Video generation completed!",
+            "result_path": result_path,
+            "file_size": file_size,
             "completed_at": datetime.now(timezone.utc).isoformat()
         }
         
+        logger.info(f"Video generation completed for task {task_id}: {result_path} ({file_size:,} bytes)")
+        
     except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Video generation failed: {str(e)}")
+        logger.error(f"Video generation failed for task {task_id}: {str(e)}")
         
         task_status[task_id] = {
             "status": "failed",
+            "progress": 0,
+            "stage": "Generation failed",
             "error": str(e),
             "failed_at": datetime.now(timezone.utc).isoformat()
         }
@@ -891,27 +977,76 @@ async def get_speaker(
 
 @router.get("/status/{task_id}")
 async def get_task_status(task_id: str):
-    """Get the status of a background task."""
-    # In a real app, you'd store task status in a database or cache
-    # For now, we'll just check if the output file exists
-    output_dir = Path(config.get('paths.output', 'output'))
-    video_file = next((f for f in output_dir.glob(f"*{task_id}*.mp4")), None)
+    """Get the status of a background task with real-time progress."""
+    # Check if task exists in our tracking system
+    if task_id in task_status:
+        task_info = task_status[task_id]
+        
+        if task_info["status"] == "completed":
+            return {
+                "success": True,
+                "data": {
+                    "task_id": task_id,
+                    "status": "completed",
+                    "progress": 100,
+                    "stage": task_info.get("stage", "Completed"),
+                    "video_url": f"/api/videos/{task_id}"
+                }
+            }
+        elif task_info["status"] == "failed":
+            return {
+                "success": False,
+                "data": {
+                    "task_id": task_id,
+                    "status": "failed",
+                    "progress": task_info.get("progress", 0),
+                    "stage": task_info.get("stage", "Failed"),
+                    "error": task_info.get("error", "Unknown error")
+                }
+            }
+        elif task_info["status"] == "processing":
+            return {
+                "success": True,
+                "data": {
+                    "task_id": task_id,
+                    "status": "processing",
+                    "progress": task_info.get("progress", 0),
+                    "stage": task_info.get("stage", "Processing...")
+                }
+            }
     
-    if video_file and video_file.exists():
+    # Check if output file exists as fallback
+    output_dir = Path(config.get('paths.output', 'output'))
+    video_file = output_dir / f"{task_id}.mp4"
+    
+    if video_file.exists():
+        # Update task status if file exists but not tracked
+        task_status[task_id] = {
+            "status": "completed",
+            "progress": 100,
+            "stage": "Completed",
+            "result_path": str(video_file),
+            "completed_at": datetime.now(timezone.utc).isoformat()
+        }
         return {
             "success": True,
             "data": {
                 "task_id": task_id,
                 "status": "completed",
-                "video_id": video_file.stem,
-                "video_url": f"/api/v1/videos/{video_file.stem}"
+                "progress": 100,
+                "stage": "Completed",
+                "video_url": f"/api/videos/{task_id}"
             }
         }
+    
+    # Task not found or not started
     return {
         "success": True,
         "data": {
             "task_id": task_id,
-            "status": "processing"
+            "status": "processing",
+            "progress": 5,
+            "stage": "Initializing..."
         }
     }
 
@@ -932,14 +1067,61 @@ async def list_videos():
     
     return {"videos": videos}
 
+@router.get("/videos/{task_id}")
+async def get_video(task_id: str):
+    """Serve a generated video file by task ID."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # First check if we have the task in our status tracking
+    if task_id in task_status:
+        task_info = task_status[task_id]
+        if task_info["status"] == "completed" and "result_path" in task_info:
+            video_file = Path(task_info["result_path"])
+            if video_file.exists():
+                logger.info(f"Serving video from task status: {video_file}")
+                return FileResponse(
+                    str(video_file),
+                    media_type="video/mp4",
+                    filename=f"paksatalker_{task_id}.mp4",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=paksatalker_{task_id}.mp4",
+                        "Cache-Control": "no-cache"
+                    }
+                )
+    
+    # Fallback: check output directory for video file
+    output_dir = Path(config.get('paths.output', 'output'))
+    video_file = output_dir / f"{task_id}.mp4"
+    
+    if video_file.exists():
+        logger.info(f"Serving video from output directory: {video_file}")
+        return FileResponse(
+            str(video_file),
+            media_type="video/mp4",
+            filename=f"paksatalker_{task_id}.mp4",
+            headers={
+                "Content-Disposition": f"attachment; filename=paksatalker_{task_id}.mp4",
+                "Cache-Control": "no-cache"
+            }
+        )
+    
+    logger.error(f"Video not found for task {task_id}")
+    raise HTTPException(status_code=404, detail="Video not found")
+
 # Text-to-Speech Endpoint
 @router.post("/tts")
 async def text_to_speech(
     text: str = Form(...),
-    voice: str = Form("default")
+    voice: str = Form("en-US-JennyNeural"),
+    provider: str = Form("auto")
 ):
-    """Convert text to speech."""
+    """Convert text to speech using real TTS providers."""
     try:
+        from api.tts_service import get_tts_service
+        
+        tts_service = get_tts_service()
+        
         # Generate audio file path
         output_dir = config.get('paths.output', 'output')
         os.makedirs(output_dir, exist_ok=True)
@@ -948,18 +1130,18 @@ async def text_to_speech(
             f"{uuid.uuid4()}.wav"
         )
         
-        # Create a dummy audio file for now
-        import wave
-        with wave.open(audio_path, 'wb') as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(22050)
-            wav_file.writeframes(b'\x00' * 22050 * 2)  # 1 second of silence
+        # Generate speech using real TTS
+        result_path = tts_service.generate_speech(
+            text=text,
+            voice=voice,
+            output_path=audio_path,
+            provider=provider
+        )
         
         return FileResponse(
-            audio_path,
+            result_path,
             media_type="audio/wav",
-            filename=os.path.basename(audio_path)
+            filename=os.path.basename(result_path)
         )
         
     except Exception as e:
@@ -1333,3 +1515,226 @@ async def create_cultural_variants(preset_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Qwen2.5-Omni Endpoints
+@router.post("/qwen/chat")
+async def qwen_multimodal_chat(
+    text: Optional[str] = Form(None),
+    image: Optional[UploadFile] = File(None),
+    audio: Optional[UploadFile] = File(None)
+):
+    """Multimodal chat with Qwen2.5-Omni model."""
+    try:
+        qwen_model = get_qwen_model()
+        
+        # Process uploaded files
+        image_data = None
+        audio_data = None
+        
+        if image:
+            image_data = await image.read()
+        
+        if audio:
+            audio_data = await audio.read()
+        
+        # Get multimodal response
+        result = qwen_model.multimodal_chat(
+            text=text,
+            image=image_data,
+            audio=audio_data
+        )
+        
+        return {
+            "success": True,
+            "response": result["response"],
+            "audio_transcription": result.get("audio_transcription", ""),
+            "image_description": result.get("image_description", "")
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/qwen/generate-script")
+async def qwen_generate_script(
+    topic: str = Form(...),
+    style: str = Form("professional"),
+    duration: int = Form(30),
+    audience: str = Form("general")
+):
+    """Generate avatar script using Qwen2.5-Omni."""
+    try:
+        qwen_model = get_qwen_model()
+        
+        result = qwen_model.generate_avatar_script(
+            topic=topic,
+            style=style,
+            duration=duration,
+            audience=audience
+        )
+        
+        return {
+            "success": True,
+            "script": result["script"],
+            "word_count": result["word_count"],
+            "estimated_duration": result["estimated_duration"]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Advanced Model Generation Endpoints
+@router.post("/generate/advanced-video")
+async def generate_advanced_video(
+    background_tasks: BackgroundTasks,
+    image: UploadFile = File(...),
+    audio: Optional[UploadFile] = File(None),
+    text: Optional[str] = Form(None),
+    # Model settings
+    useEmage: bool = Form(True),
+    useWav2Lip2: bool = Form(True),
+    useSadTalkerFull: bool = Form(True),
+    emotion: str = Form("neutral"),
+    bodyStyle: str = Form("natural"),
+    avatarType: str = Form("realistic"),
+    lipSyncQuality: str = Form("high"),
+    # Standard settings
+    resolution: Optional[str] = Form("1080p"),
+    fps: Optional[int] = Form(30)
+):
+    """Generate video using advanced AI models."""
+    try:
+        # Save uploaded files
+        image_path = await save_upload_file(image, "image")
+        audio_path = await save_upload_file(audio, "audio") if audio else None
+        
+        # Generate task ID
+        task_id = str(uuid.uuid4())
+        output_dir = Path(config.get('paths.output', 'output'))
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / f"{task_id}.mp4"
+        
+        # Add advanced generation task
+        background_tasks.add_task(
+            process_advanced_video_generation,
+            task_id=task_id,
+            image_path=image_path,
+            audio_path=audio_path,
+            output_path=str(output_path),
+            model_settings={
+                "useEmage": useEmage,
+                "useWav2Lip2": useWav2Lip2,
+                "useSadTalkerFull": useSadTalkerFull,
+                "emotion": emotion,
+                "bodyStyle": bodyStyle,
+                "avatarType": avatarType,
+                "lipSyncQuality": lipSyncQuality
+            },
+            resolution=resolution,
+            fps=fps
+        )
+        
+        return {
+            "success": True,
+            "task_id": task_id,
+            "status": "processing",
+            "models_used": {
+                "emage": useEmage,
+                "wav2lip2": useWav2Lip2,
+                "sadtalker_full": useSadTalkerFull
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Advanced video processing task
+async def process_advanced_video_generation(
+    task_id: str,
+    image_path: str,
+    audio_path: Optional[str],
+    output_path: str,
+    model_settings: dict,
+    resolution: str = "1080p",
+    fps: int = 30
+):
+    """Process video with advanced AI models"""
+    from api.realtime_progress import track_generation_progress
+    
+    # Use real-time progress tracking
+    await track_generation_progress(
+        task_id=task_id,
+        image_path=image_path,
+        audio_path=audio_path,
+        output_path=output_path,
+        settings=model_settings
+    )
+    return
+
+# Legacy function for compatibility
+async def process_advanced_video_generation_legacy(
+    task_id: str,
+    image_path: str,
+    audio_path: Optional[str],
+    output_path: str,
+    model_settings: dict,
+    resolution: str = "1080p",
+    fps: int = 30
+):
+    """Process video with advanced AI models."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Update progress
+        task_status[task_id] = {
+            "status": "processing",
+            "progress": 10,
+            "stage": "Initializing advanced AI models...",
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Initialize SadTalker with advanced settings
+        sadtalker = SadTalkerModel(
+            device="auto",
+            use_full_model=model_settings.get("useSadTalkerFull", True),
+            use_wav2lip2=model_settings.get("useWav2Lip2", True),
+            use_emage=model_settings.get("useEmage", True)
+        )
+        
+        # Update progress
+        task_status[task_id] = {
+            "status": "processing",
+            "progress": 30,
+            "stage": "Processing with advanced models...",
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Generate video with advanced settings
+        result_path = sadtalker.generate(
+            image_path=image_path,
+            audio_path=audio_path,
+            output_path=output_path,
+            emotion=model_settings.get("emotion", "neutral"),
+            style=model_settings.get("bodyStyle", "natural"),
+            avatar_type=model_settings.get("avatarType", "realistic"),
+            resolution=resolution
+        )
+        
+        # Complete
+        task_status[task_id] = {
+            "status": "completed",
+            "progress": 100,
+            "stage": "Advanced video generation completed!",
+            "result_path": result_path,
+            "completed_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Advanced video generation failed: {e}")
+        task_status[task_id] = {
+            "status": "failed",
+            "progress": 0,
+            "stage": "Advanced generation failed",
+            "error": str(e),
+            "failed_at": datetime.now(timezone.utc).isoformat()
+        }

@@ -1,0 +1,4 @@
+FFmpeg is required for video generation.
+Please install FFmpeg and add it to your PATH.
+Image: d:\PaksaTalker\temp\c6021749-c0e3-44bb-a3b1-ec99e4dc67d2_boota-Picsart-AiImageEnhancer.jpg
+Audio: d:\PaksaTalker\temp\c6021749-c0e3-44bb-a3b1-ec99e4dc67d2_luvvoice.com-20250826-YS2b2c.mp3

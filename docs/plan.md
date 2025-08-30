@@ -145,12 +145,12 @@ PaksaTalker is an advanced AI-powered platform that creates realistic talking av
   - [x] Text completion
   - [x] Basic parameter tuning
 
-#### Advanced Prompt Engineering
-- [ ] Enhanced prompting
-  - [ ] System prompts for consistent persona
-  - [ ] Few-shot learning templates
-  - [ ] Dynamic prompt construction
-  - [ ] Safety and moderation filters
+#### Advanced Prompt Engineering ✅
+- [x] Enhanced prompting
+  - [x] System prompts for consistent persona
+  - [x] Few-shot learning templates
+  - [x] Dynamic prompt construction
+  - [x] Safety and moderation filters
 
 #### Conversational Abilities
 - [ ] Multi-turn conversation
