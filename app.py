@@ -218,11 +218,19 @@ from api.prompt_endpoints import router as prompt_router
 from api.conversation_endpoints import router as convo_router
 from api.style_endpoints import router as style_router
 from api.language_endpoints import router as language_router
+from api.composition_endpoints import router as composition_router
+from api.lighting_endpoints import router as lighting_router
+from api.camera_endpoints import router as camera_router
+from api.background_endpoints import router as background_router
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(prompt_router, prefix="/api/v1")
 app.include_router(convo_router, prefix="/api/v1")
 app.include_router(style_router, prefix="/api/v1")
 app.include_router(language_router, prefix="/api/v1")
+app.include_router(composition_router, prefix="/api/v1")
+app.include_router(lighting_router, prefix="/api/v1")
+app.include_router(camera_router, prefix="/api/v1")
+app.include_router(background_router, prefix="/api/v1")
 app.include_router(websocket_router)
 
 # Serve SPA - catch all other routes and return the frontend

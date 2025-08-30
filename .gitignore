@@ -1,7 +1,3 @@
-# Node modules
-node_modules/
-frontend/node_modules/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -25,33 +21,43 @@ wheels/
 *.egg
 MANIFEST
 
-# Environment
-.env
+# Virtual Environment
 .venv
-env/
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Large files
+*.pth
+*.pt
+*.onnx
+*.bin
+*.h5
+*.safetensors
+*.dat
+
+# Local development
+temp/
+output/
+*.mp4
+*.mp3
+*.wav
+*.jpg
+*.jpeg
+*.png
+*.gif
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Local development
-temp/
-output/
-# Ignore all .git directories except the root one
-**/.git/
-!/.git/
-# Ignore embedded git repositories
+# Ignore embedded repositories
 /EMAGE/
 /PaksaTalker/PaksaTalker/
