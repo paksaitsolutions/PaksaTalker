@@ -59,3 +59,37 @@ Usage
   - Topic seed derived from first user message; included in system context to bias coherence.
 - [x] Follow-up question handling
   - If user asks a question (e.g., ends with `?`), assistant offers an optional follow-up prompt.
+
+## Style and Emotion
+
+- [x] Style adaptation
+  - [x] Emotion embedding
+    - `POST /api/v1/style/emotion-embedding` returns a 4-d embedding for a named emotion.
+  - [x] Formality levels
+    - `POST /api/v1/style/adapt-text` with `formality=casual|neutral|formal` rewrites text accordingly.
+  - [x] Domain-specific terminology
+    - `adapt-text` accepts `domain` (medical|finance|tech|education) and injects key terminology notes.
+  - [x] Personality traits
+    - `adapt-text` accepts `personality` (friendly|authoritative|enthusiastic|concise) and adds style cues.
+
+Usage
+- Adapt text: `POST /api/v1/style/adapt-text` (text, formality, domain, personality, emotion)
+- Get emotion embedding: `POST /api/v1/style/emotion-embedding` (emotion)
+
+## Multilingual Support
+
+- [x] Language capabilities
+  - [x] Code-switching detection
+    - `POST /api/v1/language/code-switch` analyzes script shares and flags multi-script text.
+  - [x] Language identification
+    - `POST /api/v1/language/detect` returns a heuristic language guess with confidence.
+  - [x] Translation integration
+    - `POST /api/v1/language/translate` uses Qwen backend when available; otherwise returns a safe fallback with a note.
+  - [x] Cultural adaptation
+    - `POST /api/v1/language/culture-hints` returns tone/style hints per language; `GET /api/v1/language/voices` lists supported voices.
+
+Usage
+- Detect language: `POST /api/v1/language/detect` (text)
+- Code-switch check: `POST /api/v1/language/code-switch` (text[, threshold])
+- Translate: `POST /api/v1/language/translate` (text, target_lang[, source_lang])
+- Culture hints: `POST /api/v1/language/culture-hints` (lang)

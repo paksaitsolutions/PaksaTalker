@@ -583,5 +583,78 @@ class AdvancedPromptEngine:
         
         return suggestions
 
+    # New: style adaptation utilities
+    def emotion_embedding(self, emotion: str) -> List[float]:
+        """Return a simple emotion embedding vector for downstream use."""
+        base = {
+            'neutral': [0.0, 0.0, 0.0, 0.0],
+            'happy':   [1.0, 0.0, 0.2, 0.1],
+            'sad':     [0.0, 1.0, 0.1, 0.0],
+            'angry':   [0.0, 0.0, 1.0, 0.2],
+            'excited': [0.8, 0.0, 0.2, 0.8],
+            'serious': [0.0, 0.6, 0.1, 0.0]
+        }
+        return base.get(emotion.lower(), base['neutral'])
+
+    def adapt_text_style(
+        self,
+        text: str,
+        formality: str = 'neutral',  # casual | neutral | formal
+        domain: Optional[str] = None,
+        personality: Optional[str] = None,
+        emotion: Optional[str] = None
+    ) -> str:
+        """Adapt text for formality, domain terminology, personality traits, and emotion cues."""
+        adapted = text.strip()
+
+        # Apply formality
+        if formality == 'formal':
+            replacements = {
+                "can't": "cannot", "won't": "will not", "it's": "it is",
+                "gonna": "going to", "wanna": "want to"
+            }
+            for k,v in replacements.items():
+                adapted = adapted.replace(k, v).replace(k.title(), v)
+        elif formality == 'casual':
+            adapted = adapted.replace("do not", "don't").replace("cannot", "can't")
+
+        # Inject domain terminology (simple heuristic list)
+        domain_terms = {
+            'medical': ["clinical evidence", "protocol", "diagnostic"],
+            'finance': ["portfolio", "liquidity", "risk management"],
+            'tech':    ["scalability", "latency", "architecture"],
+            'education': ["scaffolding", "learning outcomes", "assessment"]
+        }
+        if domain and domain.lower() in domain_terms:
+            terms = domain_terms[domain.lower()]
+            if terms and terms[0] not in adapted.lower():
+                adapted += f"\n\nNote: Key terms — {', '.join(terms)}."
+
+        # Personality traits
+        if personality:
+            traits_map = {
+                'friendly': "Maintain a warm, approachable tone.",
+                'authoritative': "Use confident, decisive language.",
+                'enthusiastic': "Add positive energy and encouragement.",
+                'concise': "Be succinct and to the point."
+            }
+            tip = traits_map.get(personality.lower())
+            if tip:
+                adapted += f"\n\nStyle: {tip}"
+
+        # Emotion cues
+        if emotion:
+            cues = {
+                'happy': "[SMILE]",
+                'serious': "[SERIOUS]",
+                'excited': "[EXCITED]",
+                'neutral': "[NEUTRAL]"
+            }
+            cue = cues.get(emotion.lower())
+            if cue and cue not in adapted:
+                adapted = f"{cue} {adapted}"
+
+        return adapted
+
 # Global instance
 prompt_engine = AdvancedPromptEngine()
