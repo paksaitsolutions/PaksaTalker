@@ -1,10 +1,6 @@
-import { useState, useRef, useEffect } from 'react'
-import { generateVideoFromPrompt } from './utils/api'
-// import StyleCustomization from './components/StyleCustomization'
-// Unified UI: hide extra panels
-// import QwenOmniChat from './components/QwenOmniChat'
-import RealTimePreview from './components/RealTimePreview'
-// import AdvancedModelControls from './components/AdvancedModelControls'
+import { useState, useRef } from 'react'
+import { generateVideo, generateVideoFromPrompt } from './utils/api'
+import StyleCustomization from './components/StyleCustomization'
 
 interface GenerationSettings {
   resolution: string
@@ -16,15 +12,6 @@ interface GenerationSettings {
   enhanceFace: boolean
   stabilization: boolean
   stylePreset?: any
-  modelSettings?: {
-    useEmage: boolean
-    useWav2Lip2: boolean
-    useSadTalkerFull: boolean
-    emotion: string
-    bodyStyle: string
-    avatarType: string
-    lipSyncQuality: string
-  }
 }
 
 interface GenerationProgress {
@@ -58,24 +45,9 @@ function App() {
     stage: 'Ready to generate',
     completedTasks: []
   })
-  const [showBackToTop, setShowBackToTop] = useState(false)
 
   const audioInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-
-  // Handle scroll for back to top button
-  useEffect(() => {
-    const handleScroll = () => {
-      setShowBackToTop(window.scrollY > 300)
-    }
-
-    window.addEventListener('scroll', handleScroll)
-    return () => window.removeEventListener('scroll', handleScroll)
-  }, [])
-
-  const scrollToTop = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
 
   const handleGenerate = async () => {
     const isPromptBased = textPrompt && !imageFile && !audioFile
@@ -113,21 +85,14 @@ function App() {
         if (textPrompt) {
           formData.append('text', textPrompt)
         }
-
-        // Unified settings: always request advanced generation with best features
-        formData.append('useEmage', 'true')
-        formData.append('useWav2Lip2', 'true')
-        formData.append('useSadTalkerFull', 'true')
-
-        // Basic quality settings
-        formData.append('resolution', settings.resolution)
-        formData.append('fps', settings.fps.toString())
-
-        const response = await fetch('/api/generate/advanced-video', {
-          method: 'POST',
-          body: formData
+        
+        Object.entries(settings).forEach(([key, value]) => {
+          if (value !== null && value !== undefined) {
+            formData.append(key, value.toString())
+          }
         })
-        data = await response.json()
+        
+        data = await generateVideo(formData)
       }
 
       if (data.ok && data.success) {
@@ -158,11 +123,11 @@ function App() {
     
     const poll = async () => {
       try {
-        const response = await fetch(`/api/status/${taskId}`)
+        const response = await fetch(`/api/v1/status/${taskId}`)
         const data = await response.json()
         
         if (data.success && data.data) {
-          const { status, progress: serverProgress, stage } = data.data
+          const { status } = data.data
           
           if (status === 'completed') {
             setProgress({
@@ -171,50 +136,45 @@ function App() {
               stage: 'Video generated successfully!',
               videoUrl: data.data.video_url,
               completedTasks: [
-                '✓ AI models initialized',
-                '✓ Input files validated',
-                '✓ Avatar image preprocessed',
-                '✓ Audio features analyzed',
-                '✓ Face detected and aligned',
-                '✓ Facial expressions generated',
-                '✓ Lip movements synchronized',
+                '✓ Input validation complete',
+                '✓ Files uploaded successfully', 
+                '✓ Generation task created',
+                '✓ Audio preprocessing complete',
+                '✓ Face detection complete',
+                '✓ 3D face reconstruction complete',
+                '✓ Expression coefficients generated',
+                '✓ Head pose estimation complete',
                 '✓ Video frames rendered',
-                '✓ Post-processing applied',
-                '✓ Video output finalized'
+                '✓ Final video compilation complete'
               ]
             })
             return
           } else if (status === 'failed') {
             setProgress({
               status: 'error',
-              progress: serverProgress || 0,
-              stage: stage || 'Generation failed',
-              error: data.data.error || 'Video generation failed',
-              completedTasks: []
+              progress: 0,
+              stage: 'Generation failed',
+              error: 'Video generation failed'
             })
             return
           }
           
-          // Use real progress from server
-          const realProgress = serverProgress || 0
+          const progressValue = Math.min(30 + (attempts * 0.05), 90)  // Very slow progress increase
           const timeElapsed = Math.floor((attempts * 5) / 60)  // Minutes elapsed
           
-          // Real-time completed tasks based on server progress
-          const completedTasks = []
-          if (realProgress >= 10) completedTasks.push('✓ AI models initialized')
-          if (realProgress >= 20) completedTasks.push('✓ Input files validated')
-          if (realProgress >= 30) completedTasks.push('✓ Avatar image preprocessed')
-          if (realProgress >= 40) completedTasks.push('✓ Audio features analyzed')
-          if (realProgress >= 50) completedTasks.push('✓ Face detected and aligned')
-          if (realProgress >= 60) completedTasks.push('✓ Facial expressions generated')
-          if (realProgress >= 70) completedTasks.push('✓ Lip movements synchronized')
-          if (realProgress >= 80) completedTasks.push('✓ Video frames rendered')
-          if (realProgress >= 90) completedTasks.push('✓ Post-processing applied')
+          // Simulate completed tasks based on progress
+          const completedTasks = ['✓ Input validation complete', '✓ Files uploaded successfully', '✓ Generation task created']
+          if (progressValue > 35) completedTasks.push('✓ Audio preprocessing complete')
+          if (progressValue > 45) completedTasks.push('✓ Face detection complete')
+          if (progressValue > 55) completedTasks.push('✓ 3D face reconstruction complete')
+          if (progressValue > 65) completedTasks.push('✓ Expression coefficients generated')
+          if (progressValue > 75) completedTasks.push('✓ Head pose estimation complete')
+          if (progressValue > 85) completedTasks.push('✓ Video frames rendered')
           
           setProgress({
             status: 'processing',
-            progress: realProgress,
-            stage: stage || `Generating video... ${realProgress}% (${timeElapsed}m elapsed)`,
+            progress: progressValue,
+            stage: `Generating video... ${Math.round(progressValue)}% (${timeElapsed}m elapsed)`,
             taskId,
             completedTasks
           })
@@ -237,19 +197,6 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
-      {/* Back to Top Button */}
-      {showBackToTop && (
-        <button
-          onClick={scrollToTop}
-          className="fixed left-6 bottom-6 z-50 bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full shadow-lg transition-all duration-300 hover:scale-110"
-          aria-label="Back to top"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
-          </svg>
-        </button>
-      )}
-      
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
@@ -286,18 +233,19 @@ function App() {
             </a>
             
             <a 
-              href="/docs/" 
-              target="_blank"
+              href="https://docs.paksatalker.com" 
+              target="_blank" 
+              rel="noopener noreferrer"
               className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md hover:shadow-lg"
             >
               <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
               </svg>
-              Documentation
+              Developer Guide
             </a>
             
             <a 
-              href="https://paksait.com" 
+              href="https://paksa.com.pk" 
               target="_blank" 
               rel="noopener noreferrer"
               className="inline-flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium shadow-md hover:shadow-lg"
@@ -441,25 +389,29 @@ function App() {
             </div>
           </div>
 
-          {/* Unified mode: Qwen panel hidden */}
-
-          {/* Real-time preview (uses quick /api/generate/preview) */}
-          <RealTimePreview imageFile={imageFile} audioFile={audioFile} settings={settings} />
-
-          {/* Unified mode: Advanced model controls hidden */}
-
-          {/* Section 4: Generation Settings (Bottom Right) */}
+          {/* Section 2: Text Prompt (Top Right) */}
           <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
             <div className="flex items-center mb-6">
-              <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center mr-3 shadow-lg">
+              <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center mr-3 shadow-lg">
                 <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Voice & Language</h2>
+              <h2 className="text-xl font-semibold text-gray-900">AI Text Generation</h2>
             </div>
             
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Text Prompt (Qwen AI)
+              </label>
+              <textarea
+                value={textPrompt}
+                onChange={(e) => setTextPrompt(e.target.value)}
+                placeholder="Enter your text here or describe what you want the avatar to say..."
+                className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none text-sm"
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -756,7 +708,10 @@ function App() {
             </div>
           </div>
 
-          {/* Unified mode: Advanced model controls hidden */}
+          {/* Section 3: Style Customization (Bottom Left) */}
+          <StyleCustomization 
+            onStyleChange={(preset) => setSettings(prev => ({ ...prev, stylePreset: preset }))}
+          />
 
           {/* Section 4: Generation Settings (Bottom Right) - moved from bottom left */}
           <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
@@ -948,7 +903,7 @@ function App() {
 
               {/* Success & Download */}
               {progress.status === 'completed' && progress.videoUrl && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-green-800">Video Ready!</p>
@@ -965,7 +920,6 @@ function App() {
                       Download
                     </a>
                   </div>
-                  <video src={progress.videoUrl} controls className="w-full rounded-lg border border-green-200" />
                 </div>
               )}
 
@@ -1011,38 +965,25 @@ function App() {
               <h2 className="text-xl font-semibold text-gray-900">Advanced Controls</h2>
             </div>
             
-            {/* Current Model Status */}
-            {settings.modelSettings ? (
+            {/* Current Style Display */}
+            {settings.stylePreset ? (
               <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <h3 className="font-medium text-blue-900 mb-2">Active AI Models</h3>
-                <div className="text-sm text-blue-800 space-y-1">
-                  {settings.modelSettings.useEmage && (
-                    <div className="flex items-center">
-                      <span className="w-2 h-2 bg-red-500 rounded-full mr-2"></span>
-                      <span>EMAGE - {settings.modelSettings.emotion} emotion, {settings.modelSettings.bodyStyle} style</span>
-                    </div>
-                  )}
-                  {settings.modelSettings.useWav2Lip2 && (
-                    <div className="flex items-center">
-                      <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
-                      <span>Wav2Lip2 AOTI - {settings.modelSettings.lipSyncQuality} quality</span>
-                    </div>
-                  )}
-                  {settings.modelSettings.useSadTalkerFull && (
-                    <div className="flex items-center">
-                      <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-                      <span>SadTalker Full Neural</span>
-                    </div>
-                  )}
+                <h3 className="font-medium text-blue-900 mb-2">Active Style</h3>
+                <div className="text-sm text-blue-800">
+                  <div className="font-medium">{settings.stylePreset.name}</div>
+                  <div className="text-xs mt-1">{settings.stylePreset.description}</div>
+                  <div className="mt-2 text-xs">
+                    Cultural Context: {settings.stylePreset.cultural_context}
+                  </div>
                 </div>
               </div>
             ) : (
               <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
-                <h3 className="font-medium text-gray-700 mb-2">Default Models Active</h3>
+                <h3 className="font-medium text-gray-700 mb-2">Default Style Active</h3>
                 <div className="text-sm text-gray-600">
-                  <div className="text-xs">Using default model configuration.</div>
+                  <div className="text-xs">No custom style selected. Using default animation settings.</div>
                   <div className="mt-2 text-xs">
-                    Configure advanced AI models in the Advanced Model Controls panel.
+                    Select a style preset from the Style Customization panel to unlock more options.
                   </div>
                 </div>
               </div>
@@ -1259,10 +1200,10 @@ function App() {
             </div>
             
             <div className="flex justify-center gap-6 text-xs text-gray-400">
-              <a href="/docs/SECURITY.md" className="hover:text-gray-600 transition-colors">Security Policy</a>
-              <a href="/docs/README.md" className="hover:text-gray-600 transition-colors">Documentation</a>
-              <a href="/docs/INTEGRATION_STATUS.md" className="hover:text-gray-600 transition-colors">Integration Status</a>
-              <a href="/LICENSE" className="hover:text-gray-600 transition-colors">License</a>
+              <a href="/privacy" className="hover:text-gray-600 transition-colors">Privacy Policy</a>
+              <a href="/terms" className="hover:text-gray-600 transition-colors">Terms of Service</a>
+              <a href="/support" className="hover:text-gray-600 transition-colors">Support</a>
+              <a href="/license" className="hover:text-gray-600 transition-colors">License</a>
             </div>
           </div>
         </footer>

@@ -93,3 +93,15 @@ Usage
 - Code-switch check: `POST /api/v1/language/code-switch` (text[, threshold])
 - Translate: `POST /api/v1/language/translate` (text, target_lang[, source_lang])
 - Culture hints: `POST /api/v1/language/culture-hints` (lang)
+
+## Performance Optimization
+
+- [x] Efficiency improvements
+  - [x] Model quantization
+    - Dynamic quantization for CPU Linear layers in SadTalker (qint8); mixed precision (FP16) on CUDA.
+  - [x] Caching mechanisms
+    - Caches audio mel features and preprocessed face crops under `temp/` keyed by file path + mtime.
+  - [x] Batch processing
+    - `POST /api/v1/generate/batch` schedules multiple jobs and returns `task_ids`.
+  - [x] Load balancing
+    - Global concurrency semaphore (`PAKSA_MAX_CONCURRENCY`, default 2) throttles parallel processing.
