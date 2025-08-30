@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
-import { generateVideo, generateVideoFromPrompt } from './utils/api'
+import { generateVideoFromPrompt } from './utils/api'
 // import StyleCustomization from './components/StyleCustomization'
-import QwenOmniChat from './components/QwenOmniChat'
-import AdvancedModelControls from './components/AdvancedModelControls'
+// Unified UI: hide extra panels
+// import QwenOmniChat from './components/QwenOmniChat'
+import RealTimePreview from './components/RealTimePreview'
+// import AdvancedModelControls from './components/AdvancedModelControls'
 
 interface GenerationSettings {
   resolution: string
@@ -111,34 +113,21 @@ function App() {
         if (textPrompt) {
           formData.append('text', textPrompt)
         }
-        
-        Object.entries(settings).forEach(([key, value]) => {
-          if (key === 'modelSettings' && value) {
-            // Add model settings as individual fields
-            Object.entries(value).forEach(([modelKey, modelValue]) => {
-              if (modelValue !== null && modelValue !== undefined) {
-                formData.append(modelKey, modelValue.toString())
-              }
-            })
-          } else if (value !== null && value !== undefined) {
-            formData.append(key, value.toString())
-          }
+
+        // Unified settings: always request advanced generation with best features
+        formData.append('useEmage', 'true')
+        formData.append('useWav2Lip2', 'true')
+        formData.append('useSadTalkerFull', 'true')
+
+        // Basic quality settings
+        formData.append('resolution', settings.resolution)
+        formData.append('fps', settings.fps.toString())
+
+        const response = await fetch('/api/generate/advanced-video', {
+          method: 'POST',
+          body: formData
         })
-        
-        // Use advanced API if model settings are configured
-        if (settings.modelSettings && (
-          settings.modelSettings.useEmage || 
-          settings.modelSettings.useWav2Lip2 || 
-          settings.modelSettings.useSadTalkerFull
-        )) {
-          const response = await fetch('/api/generate/advanced-video', {
-            method: 'POST',
-            body: formData
-          })
-          data = await response.json()
-        } else {
-          data = await generateVideo(formData)
-        }
+        data = await response.json()
       }
 
       if (data.ok && data.success) {
@@ -452,15 +441,12 @@ function App() {
             </div>
           </div>
 
-          {/* Section 2: Qwen2.5-Omni Chat (Top Right) */}
-          <QwenOmniChat 
-            onScriptGenerated={(script) => setTextPrompt(script)}
-          />
+          {/* Unified mode: Qwen panel hidden */}
 
-          {/* Section 3: Advanced Model Controls (Bottom Left) */}
-          <AdvancedModelControls 
-            onSettingsChange={(modelSettings) => setSettings(prev => ({ ...prev, modelSettings }))}
-          />
+          {/* Real-time preview (uses quick /api/generate/preview) */}
+          <RealTimePreview imageFile={imageFile} audioFile={audioFile} settings={settings} />
+
+          {/* Unified mode: Advanced model controls hidden */}
 
           {/* Section 4: Generation Settings (Bottom Right) */}
           <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
@@ -770,10 +756,7 @@ function App() {
             </div>
           </div>
 
-          {/* Section 3: Advanced Model Controls (Bottom Left) */}
-          <AdvancedModelControls 
-            onSettingsChange={(modelSettings) => setSettings(prev => ({ ...prev, modelSettings }))}
-          />
+          {/* Unified mode: Advanced model controls hidden */}
 
           {/* Section 4: Generation Settings (Bottom Right) - moved from bottom left */}
           <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
@@ -965,7 +948,7 @@ function App() {
 
               {/* Success & Download */}
               {progress.status === 'completed' && progress.videoUrl && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-green-800">Video Ready!</p>
@@ -982,6 +965,7 @@ function App() {
                       Download
                     </a>
                   </div>
+                  <video src={progress.videoUrl} controls className="w-full rounded-lg border border-green-200" />
                 </div>
               )}
 

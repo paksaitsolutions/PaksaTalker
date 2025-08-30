@@ -35,7 +35,9 @@ from fastapi import (
     Request,
     status,
     Depends,
-    Security
+    Security,
+    UploadFile,
+    File
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
@@ -209,6 +211,8 @@ os.makedirs('templates', exist_ok=True)
 
 # Import and include routers BEFORE catch-all route
 from api.routes import router as api_router
+from api.routes import get_task_status as v1_get_task_status
+from api.routes import generate_advanced_video as v1_generate_advanced_video
 from api.websocket_routes import router as websocket_router
 from api.prompt_endpoints import router as prompt_router
 app.include_router(api_router, prefix="/api/v1")
@@ -243,6 +247,133 @@ async def catch_all(full_path: str):
             detail="Frontend not built. Please run 'npm run build' in the frontend directory."
         )
     return FileResponse(index_path)
+
+# Compatibility endpoints without version prefix
+@app.get("/api/status/{task_id}", include_in_schema=False)
+async def status_alias(task_id: str):
+    """Alias for /api/v1/status/{task_id} to match frontend calls."""
+    return await v1_get_task_status(task_id)
+
+@app.post("/api/generate/advanced-video", include_in_schema=False)
+async def advanced_video_alias(
+    request: Request,
+):
+    """Alias for /api/v1/generate/advanced-video to match frontend calls."""
+    # Re-parse the incoming multipart/form-data and pass to v1 handler
+    from fastapi import BackgroundTasks
+    form = await request.form()
+    background_tasks = BackgroundTasks()
+    # FastAPI handlers expect proper dependency injection; call v1 handler directly
+    # by reconstructing parameters
+    from fastapi import UploadFile
+    image: UploadFile = form.get('image')  # type: ignore
+    audio: UploadFile = form.get('audio') if 'audio' in form else None  # type: ignore
+
+    # Coerce booleans
+    def to_bool(v, default=False):
+        if v is None:
+            return default
+        if isinstance(v, bool):
+            return v
+        return str(v).lower() in ["1", "true", "yes", "on"]
+
+    # Call underlying handler
+    return await v1_generate_advanced_video(
+        background_tasks=background_tasks,  # type: ignore
+        image=image,  # type: ignore
+        audio=audio,  # type: ignore
+        text=form.get('text'),
+        useEmage=to_bool(form.get('useEmage'), True),
+        useWav2Lip2=to_bool(form.get('useWav2Lip2'), True),
+        useSadTalkerFull=to_bool(form.get('useSadTalkerFull'), True),
+        emotion=form.get('emotion') or 'neutral',
+        bodyStyle=form.get('bodyStyle') or 'natural',
+        avatarType=form.get('avatarType') or 'realistic',
+        lipSyncQuality=form.get('lipSyncQuality') or 'high',
+        resolution=form.get('resolution') or '1080p',
+        fps=int(form.get('fps') or 30),
+    )
+
+@app.post("/api/generate/preview", include_in_schema=False)
+async def generate_preview(
+    image: UploadFile,  # type: ignore[name-defined]
+    audio: UploadFile = None,  # type: ignore[name-defined]
+    duration: int = 3
+):
+    """Generate a short preview clip for the given image/audio.
+    Returns an MP4 blob directly for inline playback in the UI.
+    """
+    try:
+        from pathlib import Path
+        import uuid as _uuid
+        import os as _os
+        from fastapi import UploadFile as _UploadFile  # ensure symbol present
+
+        temp_dir = Path(config.get('paths.temp', 'temp'))
+        output_dir = Path(config.get('paths.output', 'output'))
+        temp_dir.mkdir(exist_ok=True)
+        output_dir.mkdir(exist_ok=True)
+
+        task_id = str(_uuid.uuid4())
+        img_path = temp_dir / f"{task_id}_{getattr(image, 'filename', 'image') }"
+        with open(img_path, 'wb') as f:
+            f.write(await image.read())
+
+        audio_path = None
+        if audio is not None:
+            audio_path = temp_dir / f"{task_id}_{getattr(audio, 'filename', 'audio') }"
+            with open(audio_path, 'wb') as f:
+                f.write(await audio.read())
+
+        preview_path = temp_dir / f"{task_id}_preview.mp4"
+
+        # Try fast AI preview via SadTalkerFull (low fps/short duration)
+        ai_ok = False
+        try:
+            from models.sadtalker_full import SadTalkerFull
+            st = SadTalkerFull()
+            st.img_size = 192  # smaller for speed
+            result = st.generate(
+                image_path=str(img_path),
+                audio_path=str(audio_path) if audio_path else str(img_path),
+                output_path=str(preview_path),
+                emotion='neutral',
+                enhance_face=False
+            )
+            if Path(result).exists() and Path(result).stat().st_size > 10_000:
+                ai_ok = True
+        except Exception:
+            ai_ok = False
+
+        if not ai_ok:
+            # Fallback to ffmpeg still image + short duration/audio
+            import subprocess
+            cmd = [
+                'ffmpeg', '-y',
+                '-loop', '1', '-i', str(img_path),
+            ]
+            if audio_path:
+                cmd += ['-i', str(audio_path)]
+            else:
+                cmd += ['-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']
+            cmd += [
+                '-t', str(max(1, int(duration))),
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-shortest', str(preview_path)
+            ]
+            subprocess.run(cmd, capture_output=True)
+
+        if not preview_path.exists():
+            raise RuntimeError('Preview generation failed')
+
+        return FileResponse(
+            str(preview_path),
+            media_type='video/mp4',
+            filename=preview_path.name
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 # Custom docs endpoints  
 @app.get("/api/docs", include_in_schema=False)

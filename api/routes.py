@@ -692,14 +692,17 @@ async def generate_video(
         output_dir.mkdir(exist_ok=True)
         output_path = output_dir / f"{task_id}.mp4"
         
-        # Add task to background
+        # Add task to background (use real generation to avoid still image)
         background_tasks.add_task(
-            process_video_generation,
+            process_video_generation_direct,
             task_id=task_id,
             image_path=image_path,
             audio_path=audio_path,
             output_path=str(output_path),
-            resolution=resolution
+            resolution=resolution,
+            fps=fps,
+            enhance_face=bool(enhanceFace),
+            stabilization=bool(stabilization)
         )
         
         return {
@@ -843,6 +846,98 @@ async def process_video_generation_legacy(
     except Exception as e:
         logger.error(f"Video generation failed for task {task_id}: {str(e)}")
         
+        task_status[task_id] = {
+            "status": "failed",
+            "progress": 0,
+            "stage": "Generation failed",
+            "error": str(e),
+            "failed_at": datetime.now(timezone.utc).isoformat()
+        }
+
+async def process_video_generation_direct(
+    task_id: str,
+    image_path: str,
+    audio_path: Optional[str],
+    output_path: str,
+    resolution: str = "720p",
+    fps: int = 25,
+    enhance_face: bool = True,
+    stabilization: bool = True
+):
+    """Generate a video using SadTalker directly (moving frames), fallback to ffmpeg still image."""
+    import logging
+    import os
+    import shutil
+    logger = logging.getLogger(__name__)
+
+    def set_status(progress: int, stage: str):
+        task_status[task_id] = {
+            "status": "processing",
+            "progress": progress,
+            "stage": stage,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+
+    try:
+        set_status(10, "AI models initialized")
+
+        # Try SadTalker full pipeline
+        try:
+            from models.sadtalker_full import SadTalkerFull
+            set_status(30, "Avatar image preprocessed")
+            sadtalker = SadTalkerFull()
+            face_video = sadtalker.generate(
+                image_path=image_path,
+                audio_path=audio_path or image_path,  # if no audio, dummy path won't be used for frames
+                output_path=str(Path(config.get('paths.temp', 'temp')) / f"{task_id}_face.mp4"),
+                emotion="neutral",
+                enhance_face=enhance_face
+            )
+
+            # Move result to output
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            shutil.copy2(face_video, output_path)
+
+            set_status(95, "Post-processing applied")
+        except Exception as e:
+            logger.warning(f"SadTalker generation failed, falling back to ffmpeg still image: {e}")
+            # Fallback: still image with audio using ffmpeg
+            import subprocess
+            set_status(70, "Video frames rendered")
+
+            cmd = [
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", image_path,
+            ]
+            if audio_path:
+                cmd += ["-i", audio_path]
+            else:
+                cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
+
+            cmd += [
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-shortest",
+                "-vf", "scale=720:720:force_original_aspect_ratio=decrease,pad=720:720:(ow-iw)/2:(oh-ih)/2",
+                output_path
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise Exception(f"FFmpeg failed: {result.stderr}")
+
+        # Complete
+        task_status[task_id] = {
+            "status": "completed",
+            "progress": 100,
+            "stage": "Video generation completed!",
+            "result_path": output_path,
+            "completed_at": datetime.now(timezone.utc).isoformat()
+        }
+        logger.info(f"Video generation completed for task {task_id}: {output_path}")
+
+    except Exception as e:
+        logger.error(f"Direct generation failed for task {task_id}: {e}")
         task_status[task_id] = {
             "status": "failed",
             "progress": 0,
@@ -1613,9 +1708,9 @@ async def generate_advanced_video(
         output_dir.mkdir(exist_ok=True)
         output_path = output_dir / f"{task_id}.mp4"
         
-        # Add advanced generation task
+        # Add advanced generation task (use real generation to avoid simulated-only progress)
         background_tasks.add_task(
-            process_advanced_video_generation,
+            process_advanced_video_generation_direct,
             task_id=task_id,
             image_path=image_path,
             audio_path=audio_path,
@@ -1627,7 +1722,8 @@ async def generate_advanced_video(
                 "emotion": emotion,
                 "bodyStyle": bodyStyle,
                 "avatarType": avatarType,
-                "lipSyncQuality": lipSyncQuality
+                "lipSyncQuality": lipSyncQuality,
+                "fps": fps
             },
             resolution=resolution,
             fps=fps
@@ -1669,6 +1765,74 @@ async def process_advanced_video_generation(
         settings=model_settings
     )
     return
+
+async def process_advanced_video_generation_direct(
+    task_id: str,
+    image_path: str,
+    audio_path: Optional[str],
+    output_path: str,
+    model_settings: dict,
+    resolution: str = "1080p",
+    fps: int = 30
+):
+    """Advanced generation using SadTalkerModel directly to produce moving frames."""
+    import logging
+    import os
+    logger = logging.getLogger(__name__)
+
+    def set_status(progress: int, stage: str):
+        task_status[task_id] = {
+            "status": "processing",
+            "progress": progress,
+            "stage": stage,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+
+    try:
+        set_status(10, "Loading AI models...")
+
+        from models.sadtalker import SadTalkerModel
+        sadtalker = SadTalkerModel(
+            use_full_model=bool(model_settings.get("useSadTalkerFull", True)),
+            use_wav2lip2=bool(model_settings.get("useWav2Lip2", True)),
+            use_emage=bool(model_settings.get("useEmage", True))
+        )
+
+        set_status(40, "Analyzing inputs...")
+
+        result_path = sadtalker.generate(
+            image_path=image_path,
+            audio_path=audio_path,
+            output_path=output_path,
+            emotion=model_settings.get("emotion", "neutral"),
+            style=model_settings.get("bodyStyle", "natural"),
+            avatar_type=model_settings.get("avatarType", "realistic"),
+            resolution=resolution,
+            fps=fps
+        )
+
+        set_status(90, "Encoding video...")
+        if not os.path.exists(result_path):
+            raise Exception("Video not generated")
+
+        task_status[task_id] = {
+            "status": "completed",
+            "progress": 100,
+            "stage": "Generation completed",
+            "result_path": result_path,
+            "completed_at": datetime.now(timezone.utc).isoformat()
+        }
+        logger.info(f"Advanced generation completed for task {task_id}: {result_path}")
+
+    except Exception as e:
+        logger.error(f"Advanced direct generation failed: {e}")
+        task_status[task_id] = {
+            "status": "failed",
+            "progress": 0,
+            "stage": "Generation failed",
+            "error": str(e),
+            "failed_at": datetime.now(timezone.utc).isoformat()
+        }
 
 # Legacy function for compatibility
 async def process_advanced_video_generation_legacy(

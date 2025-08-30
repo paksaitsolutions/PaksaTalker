@@ -16,6 +16,44 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+# Utility helpers
+def _find_ffmpeg() -> Optional[str]:
+    """Locate ffmpeg on the system, return path or None."""
+    import subprocess, os
+    candidates = [
+        "ffmpeg",
+        r"C:\\ffmpeg\\bin\\ffmpeg.exe",
+        r"C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+        os.path.expandvars(r"C:\\Users\\%USERNAME%\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0-full_build\\bin\\ffmpeg.exe"),
+    ]
+    for p in candidates:
+        try:
+            result = subprocess.run([p, "-version"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                return p
+        except Exception:
+            continue
+    return None
+
+def _emage_available() -> bool:
+    """Check if EMAGE python package is importable locally."""
+    try:
+        import importlib
+        importlib.import_module('EMAGE.models.gesture_decoder')
+        return True
+    except Exception:
+        return False
+
+def _wav2lip2_available() -> bool:
+    """Check if Wav2Lip2 can run offline (module + local weights)."""
+    try:
+        from models.wav2lip2_aoti import Wav2Lip2AOTI  # noqa: F401
+        # Require local weights to avoid network fetch
+        weights_path = Path('wav2lip2-aoti') / 'weights' / 'wav2lip2_fp8.pt'
+        return weights_path.exists()
+    except Exception:
+        return False
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -72,6 +110,8 @@ def process_video_sync(
     """Synchronous video processing"""
     try:
         logger.info(f"Starting video processing for task {task_id}")
+        # Ensure output path is defined early so AI pipeline can write to it
+        output_path = OUTPUT_DIR / f"{task_id}.mp4"
         
         # Update progress
         tasks[task_id]["status"] = "processing"
@@ -177,8 +217,8 @@ def process_video_sync(
             tasks[task_id]["stage"] = "Generating body gestures (EMAGE)"
             body_video = None
 
-            # Default-disable EMAGE (requires network for assets); enable explicitly via settings
-            if settings and settings.get('use_emage', False):
+            # Only run EMAGE if requested AND available locally
+            if settings and settings.get('use_emage', False) and _emage_available():
                 try:
                     from models.emage_realistic import EMageRealistic
                     emage = EMageRealistic()
@@ -195,6 +235,8 @@ def process_video_sync(
                     logger.info(f"EMAGE body animation generated: {body_video}")
                 except Exception as e:
                     logger.warning(f"EMAGE failed: {e}")
+            elif settings and settings.get('use_emage', False):
+                logger.warning("EMAGE requested but EMAGE modules/weights not available; skipping EMAGE stage")
             
             # Step 4b: Generate facial animation with SadTalker
             tasks[task_id]["stage"] = "Generating facial animation (SadTalker)"
@@ -219,8 +261,8 @@ def process_video_sync(
             tasks[task_id]["stage"] = "Enhancing lip-sync (Wav2Lip2)"
             lipsync_video = None
 
-            # Default-disable Wav2Lip2 (requires network to fetch assets); enable explicitly via settings
-            if settings and settings.get('use_wav2lip2', False) and face_video:
+            # Only run Wav2Lip2 if requested and available
+            if settings and settings.get('use_wav2lip2', False) and face_video and _wav2lip2_available():
                 try:
                     from models.wav2lip2_aoti import Wav2Lip2AOTI
                     wav2lip = Wav2Lip2AOTI()
@@ -235,6 +277,8 @@ def process_video_sync(
                     logger.info(f"Wav2Lip2 lip-sync enhanced: {lipsync_video}")
                 except Exception as e:
                     logger.warning(f"Wav2Lip2 failed: {e}")
+            elif settings and settings.get('use_wav2lip2', False):
+                logger.warning("Wav2Lip2 requested but not available; skipping Wav2Lip2 stage")
             
             # Step 4d: Combine face and body
             tasks[task_id]["stage"] = "Combining facial and body animation"
@@ -245,6 +289,9 @@ def process_video_sync(
                 # Composite face and body videos
                 composite_output = TEMP_DIR / f"{task_id}_composite.mp4"
                 
+                ffmpeg_cmd = _find_ffmpeg()
+                if not ffmpeg_cmd:
+                    raise Exception("FFmpeg not available for compositing")
                 composite_cmd = [
                     ffmpeg_cmd, "-y",
                     "-i", final_video,  # Face video
@@ -276,7 +323,7 @@ def process_video_sync(
             tasks[task_id]["progress"] = 80
             tasks[task_id]["stage"] = "Generating basic video"
         
-        output_path = OUTPUT_DIR / f"{task_id}.mp4"
+        # output_path already defined above
         
         # Skip FFmpeg if AI pipeline succeeded
         if ai_success:
@@ -440,11 +487,19 @@ async def process_video_async(
 ):
     """Async wrapper for video processing"""
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None, 
-        process_video_sync,
-        task_id, image_path, audio_path, text, settings
-    )
+    try:
+        await loop.run_in_executor(
+            None,
+            process_video_sync,
+            task_id, image_path, audio_path, text, settings
+        )
+    except asyncio.CancelledError:
+        # Mark task as failed but do not crash the request pipeline
+        logger.warning(f"Video processing task cancelled: {task_id}")
+        tasks[task_id]["status"] = "failed"
+        tasks[task_id]["error"] = "Task cancelled"
+        tasks[task_id]["stage"] = "Cancelled"
+        raise
 
 # API endpoints
 @app.get("/api/health")
@@ -462,6 +517,82 @@ async def health_v1():
         "message": "Stable AI server running",
         "models": "ready"
     }
+
+@app.post("/api/generate/preview")
+async def generate_preview(
+    image: UploadFile = File(...),
+    audio: UploadFile = File(None),
+    duration: int = Form(3)
+):
+    """Generate a short preview clip for the given image and optional audio.
+    Tries a fast SadTalker render if available; otherwise falls back to ffmpeg.
+    Returns an MP4 file directly.
+    """
+    try:
+        task_id = str(uuid.uuid4())
+        img_path = TEMP_DIR / f"{task_id}_{image.filename or 'image' }"
+        with open(img_path, 'wb') as f:
+            f.write(await image.read())
+
+        audio_path = None
+        if audio is not None:
+            audio_path = TEMP_DIR / f"{task_id}_{audio.filename or 'audio' }"
+            with open(audio_path, 'wb') as f:
+                f.write(await audio.read())
+
+        preview_path = TEMP_DIR / f"{task_id}_preview.mp4"
+
+        # Try SadTalker quick pass
+        ai_ok = False
+        try:
+            from models.sadtalker_full import SadTalkerFull
+            st = SadTalkerFull()
+            # Small tweaks for speed
+            st.img_size = 192
+            result = st.generate(
+                image_path=str(img_path),
+                audio_path=str(audio_path) if audio_path else str(img_path),
+                output_path=str(preview_path),
+                emotion='neutral',
+                enhance_face=False
+            )
+            if os.path.exists(result) and os.path.getsize(result) > 10_000:
+                ai_ok = True
+        except Exception:
+            ai_ok = False
+
+        if not ai_ok:
+            # Fallback to ffmpeg still image + short duration/audio
+            import subprocess
+            ffmpeg_cmd = _find_ffmpeg() if '_find_ffmpeg' in globals() else 'ffmpeg'
+            cmd = [
+                ffmpeg_cmd, '-y',
+                '-loop', '1', '-i', str(img_path),
+            ]
+            if audio_path:
+                cmd += ['-i', str(audio_path)]
+            else:
+                cmd += ['-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']
+            cmd += [
+                '-t', str(max(1, int(duration))),
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-shortest', str(preview_path)
+            ]
+            subprocess.run(cmd, capture_output=True)
+
+        if not preview_path.exists():
+            raise HTTPException(status_code=500, detail='Preview generation failed')
+
+        return FileResponse(
+            str(preview_path),
+            media_type='video/mp4',
+            filename=preview_path.name
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/v1/generate/video")
 async def generate_video(
@@ -521,10 +652,11 @@ async def generate_video(
             "stabilization": stabilization
         }
         
-        # Start background processing
-        background_tasks.add_task(
-            process_video_async,
-            task_id, str(image_path), str(audio_path) if audio_path else None, text, settings
+        # Start processing outside response lifecycle to avoid CancelledError
+        asyncio.create_task(
+            process_video_async(
+                task_id, str(image_path), str(audio_path) if audio_path else None, text, settings
+            )
         )
         
         logger.info(f"Video generation task created: {task_id}")
@@ -599,10 +731,11 @@ async def generate_video_from_prompt(
             "gesture_level": gestureLevel
         }
         
-        # Start background processing
-        background_tasks.add_task(
-            process_video_async,
-            task_id, str(default_avatar), None, prompt, settings
+        # Start processing outside response lifecycle to avoid CancelledError
+        asyncio.create_task(
+            process_video_async(
+                task_id, str(default_avatar), None, prompt, settings
+            )
         )
         
         logger.info(f"Prompt-based generation task created: {task_id}")
@@ -680,10 +813,11 @@ async def generate_advanced_video(
             "fps": fps
         }
         
-        # Start background processing
-        background_tasks.add_task(
-            process_video_async,
-            task_id, str(image_path), str(audio_path) if audio_path else None, text, settings
+        # Start processing outside response lifecycle to avoid CancelledError
+        asyncio.create_task(
+            process_video_async(
+                task_id, str(image_path), str(audio_path) if audio_path else None, text, settings
+            )
         )
         
         logger.info(f"Advanced video generation task created: {task_id}")

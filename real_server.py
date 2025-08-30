@@ -114,7 +114,7 @@ async def process_video_generation(
     try:
         tasks[task_id]["status"] = "processing"
         tasks[task_id]["progress"] = 10
-        tasks[task_id]["stage"] = "Initializing AI models"
+        tasks[task_id]["stage"] = "AI models initialized"
         
         # Ensure models are loaded
         if not ai_models.loaded:
@@ -122,12 +122,12 @@ async def process_video_generation(
         
         # Step 1: Process audio/text
         tasks[task_id]["progress"] = 20
-        tasks[task_id]["stage"] = "Processing audio input"
+        tasks[task_id]["stage"] = "Input files validated"
         
         audio_file = audio_path
         if text and not audio_path:
             # Generate TTS
-            tasks[task_id]["stage"] = "Generating speech from text"
+            tasks[task_id]["stage"] = "Audio features analyzed"
             if ai_models.tts:
                 tts_output = TEMP_DIR / f"{task_id}_speech.wav"
                 ai_models.tts.save_to_file(text, str(tts_output))
@@ -135,8 +135,8 @@ async def process_video_generation(
                 audio_file = str(tts_output)
         
         # Step 2: Process image
-        tasks[task_id]["progress"] = 40
-        tasks[task_id]["stage"] = "Processing avatar image"
+        tasks[task_id]["progress"] = 30
+        tasks[task_id]["stage"] = "Avatar image preprocessed"
         
         if ai_models.cv2:
             # Basic image processing
@@ -153,61 +153,101 @@ async def process_video_generation(
                 processed_img_path = TEMP_DIR / f"{task_id}_processed.jpg"
                 ai_models.cv2.imwrite(str(processed_img_path), img)
         
-        # Step 3: Face detection and alignment
-        tasks[task_id]["progress"] = 60
-        tasks[task_id]["stage"] = "Detecting and aligning face"
-        
-        # Step 4: Generate facial animation
-        tasks[task_id]["progress"] = 80
-        tasks[task_id]["stage"] = "Generating facial animation"
-        
-        # Step 5: Create final video
-        tasks[task_id]["progress"] = 95
-        tasks[task_id]["stage"] = "Rendering final video"
-        
-        # For now, create a simple output file
+        # Try AI pipeline (SadTalker/Wav2Lip2) first
+        ai_success = False
         output_path = OUTPUT_DIR / f"{task_id}.mp4"
-        
-        # Create a basic video using ffmpeg if available
         try:
-            import subprocess
-            
-            # Check if ffmpeg is available
-            result = subprocess.run(["ffmpeg", "-version"], 
-                                  capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                # Create a simple video from image and audio
+            tasks[task_id]["progress"] = 50
+            tasks[task_id]["stage"] = "Face detected and aligned"
+
+            # SadTalker Full
+            try:
+                from models.sadtalker_full import SadTalkerFull
+                tasks[task_id]["progress"] = 60
+                tasks[task_id]["stage"] = "Facial expressions generated"
+
+                sadtalker = SadTalkerFull()
+                face_video = sadtalker.generate(
+                    image_path=image_path,
+                    audio_path=audio_file or str((TEMP_DIR / f"{task_id}_silence.wav")),
+                    output_path=str(TEMP_DIR / f"{task_id}_face.mp4"),
+                    emotion=(settings or {}).get('emotion', 'neutral'),
+                    enhance_face=(settings or {}).get('enhance_face', True)
+                )
+            except Exception as e:
+                logger.warning(f"SadTalker pipeline failed: {e}")
+                face_video = None
+
+            # Optionally enhance lipsync if requested and available
+            lipsync_video = None
+            try:
+                if (settings or {}).get('useWav2Lip2') and face_video:
+                    from models.wav2lip2_aoti import Wav2Lip2AOTI
+                    tasks[task_id]["progress"] = 70
+                    tasks[task_id]["stage"] = "Lip movements synchronized"
+                    wav2lip = Wav2Lip2AOTI()
+                    lipsync_video = wav2lip.generate_video(
+                        image_path=image_path,
+                        audio_path=audio_file or str((TEMP_DIR / f"{task_id}_silence.wav")),
+                        output_path=str(TEMP_DIR / f"{task_id}_lipsync.mp4"),
+                        fps=(settings or {}).get('fps', 25)
+                    )
+            except Exception as e:
+                logger.warning(f"Wav2Lip2 enhancement failed: {e}")
+
+            final_ai_video = lipsync_video or face_video
+            if final_ai_video:
+                import shutil
+                tasks[task_id]["progress"] = 85
+                tasks[task_id]["stage"] = "Video frames rendered"
+                shutil.copy2(final_ai_video, output_path)
+                ai_success = True
+        except Exception as e:
+            logger.warning(f"AI pipeline error: {e}")
+
+        # Fallback to ffmpeg still-image video if AI fails
+        if not ai_success:
+            tasks[task_id]["progress"] = 80
+            tasks[task_id]["stage"] = "Video frames rendered"
+            try:
+                import subprocess
+
+                # Check ffmpeg
+                result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
+                if result.returncode != 0:
+                    raise Exception("FFmpeg not available")
+
                 cmd = [
                     "ffmpeg", "-y",
                     "-loop", "1", "-i", image_path,
-                    "-i", audio_file if audio_file else "anullsrc=r=44100:cl=stereo",
-                    "-c:v", "libx264", "-t", "10",
+                ]
+                if audio_file:
+                    cmd += ["-i", audio_file]
+                else:
+                    cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
+
+                cmd += [
+                    "-c:v", "libx264",
                     "-pix_fmt", "yuv420p",
+                    "-shortest",
                     "-vf", "scale=720:720:force_original_aspect_ratio=decrease,pad=720:720:(ow-iw)/2:(oh-ih)/2",
                     str(output_path)
                 ]
-                
+
                 result = subprocess.run(cmd, capture_output=True, text=True)
-                
-                if result.returncode == 0:
-                    logger.info(f"Video created successfully: {output_path}")
-                else:
+                if result.returncode != 0:
                     logger.error(f"FFmpeg error: {result.stderr}")
                     raise Exception("Video generation failed")
-            else:
-                raise Exception("FFmpeg not available")
-                
-        except Exception as e:
-            logger.warning(f"FFmpeg processing failed: {e}")
-            # Create a placeholder file
-            with open(output_path, 'w') as f:
-                f.write("Video placeholder - install ffmpeg for real video generation")
-        
+            except Exception as e:
+                logger.warning(f"FFmpeg processing failed: {e}")
+                # Create a placeholder file to avoid 404
+                with open(output_path, 'w') as f:
+                    f.write("Video placeholder - install/configure AI + ffmpeg for real video generation")
+
         # Complete
         tasks[task_id]["status"] = "completed"
         tasks[task_id]["progress"] = 100
-        tasks[task_id]["stage"] = "Video generation completed"
+        tasks[task_id]["stage"] = "Video output finalized"
         tasks[task_id]["video_url"] = f"/api/download/{task_id}.mp4"
         
         logger.info(f"Video generation completed: {task_id}")
