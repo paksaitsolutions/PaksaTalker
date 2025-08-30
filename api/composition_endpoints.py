@@ -108,10 +108,11 @@ async def compose_basic(
 
         return {
             'success': True,
-            'output': f"/api/download/{output_path.name}",
-            'task_id': sid
+            'data': {
+                'output': f"/api/download/{output_path.name}",
+                'task_id': sid
+            }
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-

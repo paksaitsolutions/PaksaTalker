@@ -145,8 +145,7 @@ async def process_video(
         if result.returncode != 0:
             raise RuntimeError(result.stderr or 'ffmpeg failed')
 
-        return {"success": True, "output": f"/api/download/{out_path.name}", "task_id": sid}
+        return {"success": True, "data": {"output": f"/api/download/{out_path.name}", "task_id": sid}}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-

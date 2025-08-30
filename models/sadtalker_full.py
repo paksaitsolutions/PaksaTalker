@@ -162,6 +162,7 @@ class SadTalkerFull(BaseModel):
         self.pose_dim = 6
         
         self.initialized = False
+        self.has_pretrained = False
     
     def load_model(self, model_path: Optional[str] = None, **kwargs):
         """Load the SadTalker models"""
@@ -174,9 +175,11 @@ class SadTalkerFull(BaseModel):
             # Load pretrained weights if available
             if model_path and os.path.exists(model_path):
                 self._load_pretrained_weights(model_path)
+                self.has_pretrained = True
             else:
-                # Initialize with random weights (for demo)
+                # Initialize with random weights (placeholder only)
                 self._initialize_weights()
+                self.has_pretrained = False
             
             # Optional quantization / mixed precision for performance
             try:
@@ -359,6 +362,9 @@ class SadTalkerFull(BaseModel):
         """Generate talking head video"""
         if not self.initialized:
             self.load_model()
+        # If we don't have real pretrained weights, skip generation to avoid corrupted visuals
+        if not getattr(self, 'has_pretrained', False):
+            raise RuntimeError("SadTalker pretrained weights not available; skipping AI generation")
         
         try:
             # Extract audio features

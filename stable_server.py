@@ -9,12 +9,16 @@ import asyncio
 import uuid
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from api.capabilities_endpoints import router as capabilities_router
 import uvicorn
+
+# Performance tuning envs
+FFMPEG_THREADS = int(os.environ.get('PAKSA_FFMPEG_THREADS', '0'))  # 0 = ffmpeg auto
 
 # Utility helpers
 def _find_ffmpeg() -> Optional[str]:
@@ -138,6 +142,9 @@ DOCS_DIR = BASE_DIR / "docs"
 if DOCS_DIR.exists():
     app.mount("/docs", StaticFiles(directory=DOCS_DIR), name="docs")
 
+# Capabilities endpoint (so frontend can detect available models/features)
+app.include_router(capabilities_router, prefix="/api/v1")
+
 def process_video_sync(
     task_id: str,
     image_path: str,
@@ -173,6 +180,13 @@ def process_video_sync(
         try:
             import cv2
             img = cv2.imread(image_path)
+            try:
+                # Use available CPU threads; allow OpenCL if available
+                cv2.setNumThreads(max(1, os.cpu_count() or 1))
+                if hasattr(cv2, 'ocl'):
+                    cv2.ocl.setUseOpenCL(True)
+            except Exception:
+                pass
             if img is not None:
                 # Resize image to standard size
                 height, width = img.shape[:2]
@@ -283,6 +297,18 @@ def process_video_sync(
             try:
                 from models.sadtalker_full import SadTalkerFull
                 sadtalker = SadTalkerFull()
+
+                # Level of detail (LOD) based on requested output resolution
+                face_size = 256
+                try:
+                    target_res = (settings or {}).get('resolution', '720p')
+                    if isinstance(target_res, str) and target_res.lower() in ('240p','360p','480p','720p'):
+                        face_size = 192
+                    elif isinstance(target_res, str) and target_res.lower() in ('1080p','1440p','4k'):
+                        face_size = 256
+                except Exception:
+                    pass
+                sadtalker.img_size = face_size
 
                 face_video = sadtalker.generate(
                     image_path=image_path,
@@ -447,25 +473,26 @@ def process_video_sync(
                         # Generate silent audio for the duration
                         cmd.extend(["-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:d={audio_duration}"])
                         cmd.extend(["-c:a", "aac"])
-                        # Set explicit duration
-                        cmd.extend(["-t", str(audio_duration)])
+                    # Set explicit duration
+                    cmd.extend(["-t", str(audio_duration)])
 
                     # Video settings
                     cmd.extend([
                         "-c:v", "libx264",
+                        *( ["-threads", str(FFMPEG_THREADS)] if FFMPEG_THREADS > 0 else [] ),
                         "-pix_fmt", "yuv420p",
-                    "-r", "25",  # Frame rate
-                    "-crf", "18",
-                    "-tune", "stillimage",
-                    "-vf", "scale=720:720:force_original_aspect_ratio=decrease,pad=720:720:(ow-iw)/2:(oh-ih)/2",
-                    str(output_path)
-                ])
+                        "-r", "25",  # Frame rate
+                        "-crf", "18",
+                        "-tune", "stillimage",
+                        "-vf", "scale=720:720:force_original_aspect_ratio=decrease,pad=720:720:(ow-iw)/2:(oh-ih)/2",
+                        str(output_path)
+                    ])
 
                     logger.info(f"Running ffmpeg command: {' '.join(cmd)}")
 
                     result = subprocess.run(
-                        cmd, 
-                        capture_output=True, 
+                        cmd,
+                        capture_output=True,
                         text=True,
                         timeout=120  # Increased timeout
                     )
@@ -621,6 +648,7 @@ async def generate_preview(
             cmd += [
                 '-t', str(max(1, int(duration))),
                 '-c:v', 'libx264',
+                *( ["-threads", str(FFMPEG_THREADS)] if FFMPEG_THREADS > 0 else [] ),
                 '-pix_fmt', 'yuv420p',
                 '-shortest', str(preview_path)
             ]

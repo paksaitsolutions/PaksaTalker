@@ -102,7 +102,7 @@ async def green_screen(
         if result.returncode != 0:
             raise RuntimeError(result.stderr or 'ffmpeg failed')
 
-        return {"success": True, "output": f"/api/download/{out_path.name}", "task_id": sid}
+        return {"success": True, "data": {"output": f"/api/download/{out_path.name}", "task_id": sid}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -171,7 +171,7 @@ async def virtual_set(
         if result.returncode != 0:
             raise RuntimeError(result.stderr or 'ffmpeg failed')
 
-        return {"success": True, "output": f"/api/download/{out_path.name}", "task_id": sid}
+        return {"success": True, "data": {"output": f"/api/download/{out_path.name}", "task_id": sid}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -231,7 +231,7 @@ async def background_blur(
         if result.returncode != 0:
             raise RuntimeError(result.stderr or 'ffmpeg failed')
 
-        return {"success": True, "output": f"/api/download/{out_path.name}", "task_id": sid}
+        return {"success": True, "data": {"output": f"/api/download/{out_path.name}", "task_id": sid}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -283,7 +283,6 @@ async def environment_map(
         if result.returncode != 0:
             raise RuntimeError(result.stderr or 'ffmpeg failed')
 
-        return {"success": True, "output": f"/api/download/{out_path.name}", "task_id": sid}
+        return {"success": True, "data": {"output": f"/api/download/{out_path.name}", "task_id": sid}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-

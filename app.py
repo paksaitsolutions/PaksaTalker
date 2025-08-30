@@ -2,32 +2,27 @@
 PaksaTalker - AI-Powered Video Generation Platform
 
 This is the main FastAPI application that serves both the API and the frontend.
-
-## Features
-- RESTful API for video generation and processing
-- JWT-based authentication
-- Background task processing
-- Interactive API documentation
-- CORS support
-- Static file serving for frontend
 """
 import os
 import logging
 import time
 import sys
+from pathlib import Path
+from typing import Dict, Any, Optional, List, Union
+from datetime import datetime
 
-# Configure logging
+# Import configuration before setting up logging
+from config import config
+
+# Configure logging once
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if config['app'].get('debug', False) else logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
-from pathlib import Path
-from typing import Dict, Any, Optional, List
-from datetime import datetime
 
 from fastapi import (
     FastAPI,
@@ -51,7 +46,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp, Scope, Receive, Send
 from werkzeug.utils import secure_filename
 
-from config import config
 from api.schemas.base import (
     APIStatus,
     ErrorResponse,
@@ -63,15 +57,7 @@ from api.schemas.schemas import (
     TaskStatusResponse
 )
 
-# Import configuration
-from config import config
-
-# Setup logging
-logging.basicConfig(
-    level=logging.DEBUG if config['app']['debug'] else logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Logging is already configured above
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -89,15 +75,24 @@ class SPAStaticFiles(StaticFiles):
             return await super().get_response("index.html", scope)
         return response
 
-def custom_openapi():
-    """Generate custom OpenAPI schema with additional metadata."""
-    if app.openapi_schema:
+def custom_openapi() -> Dict[str, Any]:
+    """Generate custom OpenAPI schema with additional metadata and documentation.
+    
+    Returns:
+        Dict[str, Any]: The generated OpenAPI schema
+        
+    Raises:
+        RuntimeError: If there's an error generating the schema
+    """
+    if hasattr(app, 'openapi_schema') and app.openapi_schema:
         return app.openapi_schema
-
-    openapi_schema = get_openapi(
-        title=config['app']['name'],
-        version=config['app']['version'],
-        description="""
+    
+    try:
+        # Get base OpenAPI schema
+        openapi_schema = get_openapi(
+            title=config['app'].get('name', 'PaksaTalker API'),
+            version=config['app'].get('version', '1.0.0'),
+            description="""
         ## PaksaTalker API
 
         This is the API documentation for PaksaTalker, an AI-powered video generation platform.
@@ -141,38 +136,358 @@ def custom_openapi():
             }
         ],
     )
-
+    
+    # Initialize components if not present
+    if "components" not in openapi_schema:
+        openapi_schema["components"] = {}
+    
     # Add security schemes
-    openapi_schema["components"]["securitySchemes"] = {
-        "OAuth2PasswordBearer": {
-            "type": "http",
-            "scheme": "bearer",
-            "bearerFormat": "JWT",
-            "description": "Enter your JWT token in the format: Bearer <token>"
+    security_schemes = {
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+            "description": "Enter your API key in the format: Bearer <your-api-key>"
+        },
+        "OAuth2": {
+            "type": "oauth2",
+            "flows": {
+                "authorizationCode": {
+                    "authorizationUrl": config.get('auth', {}).get('authorization_url', '/auth/authorize'),
+                    "tokenUrl": config.get('auth', {}).get('token_url', '/auth/token'),
+                    "scopes": {
+                        "read": "Read access to resources",
+                        "write": "Write access to resources"
+                    }
+                }
+            }
         }
     }
-
+    
+    openapi_schema["components"]["securitySchemes"] = security_schemes
+    
     # Add global security
-    openapi_schema["security"] = [{"OAuth2PasswordBearer": []}]
-
-    # Add more detailed error responses
+    openapi_schema["security"] = [
+        {"ApiKeyAuth": []},
+        {"OAuth2": ["read"]}
+    ]
+    
+    # Add error responses
     for path in openapi_schema["paths"].values():
         for method in path.values():
             if "responses" not in method:
                 method["responses"] = {}
+            method["responses"].update({
+                "400": {"$ref": "#/components/responses/400"},
+                "401": {"$ref": "#/components/responses/401"},
+                "403": {"$ref": "#/components/responses/403"},
+                "404": {"$ref": "#/components/responses/404"},
+                "422": {"$ref": "#/components/responses/422"},
+                "500": {"$ref": "#/components/responses/500"},
+            })
+    
+    # Initialize responses if not present
+    if "responses" not in openapi_schema["components"]:
+        openapi_schema["components"]["responses"] = {}
+        
+    # Add common responses
+    common_responses = {
+        "400": {
+            "description": "Bad Request: The request was invalid or cannot be served.",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/Error"},
+                    "example": {
+                        "detail": "Invalid request parameters",
+                        "error": "bad_request",
+                        "status_code": 400
+                    }
+                }
+            }
+        },
+        "401": {
+            "description": "Unauthorized: Authentication failed or user doesn't have permissions.",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/Error"},
+                    "example": {
+                        "detail": "Not authenticated",
+                        "error": "unauthorized",
+                        "status_code": 401
+                    }
+                }
+            }
+        },
+        "403": {
+            "description": "Forbidden: The request is understood but it has been refused or access is not allowed.",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/Error"},
+                    "example": {
+                        "detail": "Insufficient permissions",
+                        "error": "forbidden",
+                        "status_code": 403
+                    }
+                }
+            }
+        },
+        "404": {
+            "description": "Not Found: The requested resource doesn't exist.",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/Error"},
+                    "example": {
+                        "detail": "Resource not found",
+                        "error": "not_found",
+                        "status_code": 404
+                    }
+                }
+            }
+        },
+        "422": {
+            "description": "Validation Error: The request was well-formed but was unable to be followed due to semantic errors.",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/HTTPValidationError"},
+                    "example": {
+                        "detail": [
+                            {
+                                "loc": ["body", "field_name"],
+                                "msg": "field required",
+                                "type": "value_error.missing"
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        "429": {
+            "description": "Too Many Requests: Rate limit exceeded.",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/Error"},
+                    "example": {
+                        "detail": "Rate limit exceeded",
+                        "error": "rate_limit_exceeded",
+                        "status_code": 429,
+                        "retry_after": 60
+                    }
+                }
+            }
+        },
+        "500": {
+            "description": "Internal Server Error: An unexpected error occurred on the server.",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/Error"},
+                    "example": {
+                        "detail": "Internal server error",
+                        "error": "internal_server_error",
+                        "status_code": 500
+                    }
+                }
+            }
+        },
+    }
+    
+    openapi_schema["components"]["responses"].update(common_responses)
+    
+    # Initialize schemas if not present
+    if "schemas" not in openapi_schema["components"]:
+        openapi_schema["components"]["schemas"] = {}
+    
+    # Add common schemas
+    openapi_schema["components"]["schemas"].update({
+        "Error": {
+            "title": "Error",
+            "type": "object",
+            "properties": {
+                "detail": {"type": "string", "description": "A human-readable explanation of the error"},
+                "error": {"type": "string", "description": "A machine-readable error code"},
+                "status_code": {"type": "integer", "description": "The HTTP status code"},
+                "retry_after": {"type": "integer", "description": "Number of seconds to wait before retrying (for rate limits)", "nullable": True}
+            },
+            "required": ["detail", "status_code"]
+        },
+        "HTTPValidationError": {
+            "title": "HTTPValidationError",
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "title": "Detail",
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/ValidationError"},
+                    "description": "List of validation errors"
+                }
+            }
+        },
+        "ValidationError": {
+            "title": "ValidationError",
+            "required": ["loc", "msg", "type"],
+            "type": "object",
+            "properties": {
+                "loc": {
+                    "title": "Location",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Location of the error in the request"
+                },
+                "msg": {
+                    "title": "Message", 
+                    "type": "string",
+                    "description": "Description of the error"
+                },
+                "type": {
+                    "title": "Error Type", 
+                    "type": "string",
+                    "description": "Type of the error"
+                }
+            }
+        },
+        "HealthCheck": {
+            "title": "HealthCheck",
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["ok", "error"], "description": "Overall service status"},
+                "version": {"type": "string", "description": "API version"},
+                "timestamp": {"type": "string", "format": "date-time", "description": "Current server time"},
+                "dependencies": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                            "status": {"type": "string", "enum": ["ok", "error"], "description": "Dependency status"},
+                            "details": {"type": "string", "description": "Additional details about the dependency status"}
+                        },
+                        "required": ["status"]
+                    },
+                    "description": "Status of external dependencies"
+                }
+            },
+            "required": ["status", "version", "timestamp"]
+        }
+    })
+    
+    # Add tags for better organization
+    openapi_schema["tags"] = [
+        {
+            "name": "Video Generation",
+            "description": "Endpoints for generating and processing videos"
+        },
+        {
+            "name": "Authentication",
+            "description": "Authentication and authorization endpoints"
+        },
+        {
+            "name": "Status",
+            "description": "Health check and system status"
+        },
+        {
+            "name": "Documentation",
+            "description": "API documentation and schema"
+        }
+    ]
+    
+    # Add examples for common requests/responses
+    openapi_schema["components"]["examples"] = {
+        "GenerateVideoRequest": {
+            "summary": "Example video generation request",
+            "value": {
+                "image_url": "https://example.com/image.jpg",
+                "audio_url": "https://example.com/audio.mp3",
+                "output_format": "mp4",
+                "resolution": "720p",
+                "fps": 30,
+                "enhance_quality": True,
+                "background_removal": True,
+                "watermark": {
+                    "enabled": True,
+                    "text": "PaksaTalker",
+                    "position": "bottom-right",
+                    "opacity": 0.5
+                }
+            }
+        },
+        "VideoGenerationResponse": {
+            "summary": "Example video generation response",
+            "value": {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "status": "processing",
+                "progress": 0,
+                "estimated_time_remaining": 30,
+                "result_url": "https://api.paksatalker.com/results/550e8400-e29b-41d4-a716-446655440000/video.mp4",
+                "created_at": "2025-08-30T12:00:00Z",
+                "updated_at": "2025-08-30T12:00:05Z"
+            }
+        },
+        "ErrorRateLimit": {
+            "summary": "Example rate limit error",
+            "value": {
+                "detail": "Rate limit exceeded",
+                "error": "rate_limit_exceeded",
+                "status_code": 429,
+                "retry_after": 60
+            }
+        }
+    }
 
-            # Add common error responses
-            for code, response in example_responses.items():
-                if str(code) not in method["responses"]:
-                    method["responses"][str(code)] = response
+    except Exception as e:
+        logger.error(f"Failed to build OpenAPI schema: {str(e)}")
+        raise
+        logger.error(f"Failed to build OpenAPI schema: {str(e)}")
+        raise
 
-    app.openapi_schema = openapi_schema
-    return openapi_schema
+    try:
+        # Cache the generated schema
+        app.openapi_schema = openapi_schema
+        return app.openapi_schema
+    except Exception as e:
+        logger.error(f"Failed to cache OpenAPI schema: {str(e)}")
+        return openapi_schema  # Still return the schema even if caching fails
+    except Exception as e:
+        logger.error(f"Failed to generate OpenAPI schema: {str(e)}")
+        # Return a minimal valid schema if generation fails
+        return {
+            "openapi": "3.0.2",
+            "info": {
+                "title": "PaksaTalker API",
+                "version": "1.0.0",
+                "description": "Error generating full documentation. Please check server logs."
+            },
+            "paths": {}
+        }
 
 # Initialize FastAPI app
 app = FastAPI(
-    title=config['app']['name'],
+    title="PaksaTalker API",
+    description="""## Professional AI Video Generation API
+    
+### Overview
+PaksaTalker provides AI-powered video generation with advanced features for creating realistic talking head videos.
+
+### Authentication
+- This API uses API Key authentication
+- Include your API key in the `X-API-Key` header
+
+### Rate Limiting
+- 60 requests per minute
+- 1000 requests per hour
+    """,
     version=config['app']['version'],
+    contact={
+        "name": "Paksa IT Solutions",
+        "email": "support@paksait.com",
+    },
+    license_info={
+        "name": "Proprietary",
+    },
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/openapi.json",
+    servers=[
+        {"url": "http://localhost:8000", "description": "Local Development"},
+        {"url": "http://api.paksatalker.com", "description": "Production"}
+    ],
     description="AI-Powered Video Generation Platform",
     docs_url=None,  # Disable default docs
     redoc_url=None,  # Disable default redoc
@@ -223,6 +538,7 @@ from api.lighting_endpoints import router as lighting_router
 from api.camera_endpoints import router as camera_router
 from api.background_endpoints import router as background_router
 from api.postprocess_endpoints import router as post_router
+from api.capabilities_endpoints import router as capabilities_router
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(prompt_router, prefix="/api/v1")
 app.include_router(convo_router, prefix="/api/v1")
@@ -233,6 +549,7 @@ app.include_router(lighting_router, prefix="/api/v1")
 app.include_router(camera_router, prefix="/api/v1")
 app.include_router(background_router, prefix="/api/v1")
 app.include_router(post_router, prefix="/api/v1")
+app.include_router(capabilities_router, prefix="/api/v1")
 app.include_router(websocket_router)
 
 # Serve SPA - catch all other routes and return the frontend
@@ -394,21 +711,76 @@ async def generate_preview(
 # Custom docs endpoints  
 @app.get("/api/docs", include_in_schema=False)
 async def custom_swagger_ui_html():
+    """Generate custom Swagger UI with PaksaTalker branding"""
     return get_swagger_ui_html(
-        openapi_url="/api/openapi.json",
-        title=f"{config['app']['name']} - Swagger UI",
-        oauth2_redirect_url=app.swagger_ui_oauth2_redirect_url,
-        swagger_js_url="/static/swagger-ui-bundle.js",
-        swagger_css_url="/static/swagger-ui.css",
+        openapi_url="/openapi.json",
+        title="PaksaTalker API Documentation",
+        swagger_js_url="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
+        swagger_css_url="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css",
+        swagger_favicon_url="https://paksait.com/favicon.ico",
+        swagger_ui_parameters={
+            "defaultModelsExpandDepth": -1,
+            "docExpansion": "list",
+            "filter": True,
+            "persistAuthorization": True,
+            "displayRequestDuration": True
+        }
     )
 
 @app.get("/api/redoc", include_in_schema=False)
 async def redoc_html():
+    """Generate custom ReDoc UI with PaksaTalker branding"""
     return get_redoc_html(
-        openapi_url="/api/openapi.json",
-        title=f"{config['app']['name']} - ReDoc",
-        redoc_js_url="/static/redoc.standalone.js",
+        openapi_url="/openapi.json",
+        title="PaksaTalker API Documentation",
+        redoc_js_url="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js",
+        with_google_fonts=True,
+        redoc_favicon_url="https://paksait.com/favicon.ico"
     )
+
+@app.get("/api/generate-docs", include_in_schema=False)
+async def generate_docs():
+    """Generate static API documentation"""
+    try:
+        import subprocess
+        import sys
+        
+        # Run the documentation generator
+        result = subprocess.run(
+            [sys.executable, "generate_docs.py"],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode == 0:
+            return {
+                "status": "success",
+                "message": "Documentation generated successfully",
+                "path": str(Path("docs").absolute())
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to generate documentation: {result.stderr}"
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating documentation: {str(e)}"
+        )
+
+# Serve static documentation files
+@app.get("/docs/{file_path:path}", include_in_schema=False)
+async def serve_docs(file_path: str):
+    """Serve static documentation files"""
+    docs_path = Path("docs") / file_path
+    if not docs_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    if docs_path.is_dir():
+        return FileResponse(docs_path / "index.html" if (docs_path / "index.html").exists() else "")
+    
+    return FileResponse(docs_path)
 
 # Health check endpoint
 @app.get(

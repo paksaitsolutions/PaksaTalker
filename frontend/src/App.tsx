@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { generateVideo, generateVideoFromPrompt } from './utils/api'
 import StyleCustomization from './components/StyleCustomization'
 
@@ -49,6 +49,17 @@ function App() {
   const audioInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
 
+  // Backend capabilities for auto-toggle of advanced features
+  const [caps, setCaps] = useState<{models:{sadtalker:boolean;wav2lip2:boolean;emage:boolean;qwen:boolean}}|null>(null)
+  useEffect(() => {
+    fetch('/api/v1/capabilities')
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (j && j.success && j.data && j.data.models) setCaps({models:j.data.models})
+      })
+      .catch(() => {})
+  }, [])
+
   const handleGenerate = async () => {
     const isPromptBased = textPrompt && !imageFile && !audioFile
     const isFileBased = imageFile && (audioFile || textPrompt)
@@ -85,14 +96,30 @@ function App() {
         if (textPrompt) {
           formData.append('text', textPrompt)
         }
-        
-        Object.entries(settings).forEach(([key, value]) => {
-          if (value !== null && value !== undefined) {
-            formData.append(key, value.toString())
-          }
-        })
-        
-        data = await generateVideo(formData)
+
+        // Basic settings
+        formData.append('resolution', settings.resolution)
+        formData.append('fps', settings.fps.toString())
+
+        const canEmage = caps?.models?.emage
+        const canW2L = caps?.models?.wav2lip2
+
+        if (canEmage || canW2L) {
+          formData.append('useSadTalkerFull', 'true')
+          formData.append('useEmage', canEmage ? 'true' : 'false')
+          formData.append('useWav2Lip2', canW2L ? 'true' : 'false')
+
+          const resp = await fetch('/api/generate/advanced-video', { method: 'POST', body: formData })
+          data = await resp.json()
+        } else {
+          // Fallback to standard endpoint
+          Object.entries(settings).forEach(([key, value]) => {
+            if (value !== null && value !== undefined) {
+              formData.append(key, value.toString())
+            }
+          })
+          data = await generateVideo(formData)
+        }
       }
 
       if (data.ok && data.success) {
