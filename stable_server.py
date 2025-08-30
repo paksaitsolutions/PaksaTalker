@@ -116,6 +116,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Simple load control
+MAX_CONCURRENCY = int(os.environ.get('PAKSA_MAX_CONCURRENCY', '2'))
+_sem = asyncio.Semaphore(MAX_CONCURRENCY)
+
 # Add CORS
 app.add_middleware(
     CORSMiddleware,
@@ -528,11 +532,12 @@ async def process_video_async(
     """Async wrapper for video processing"""
     loop = asyncio.get_event_loop()
     try:
-        await loop.run_in_executor(
-            None,
-            process_video_sync,
-            task_id, image_path, audio_path, text, settings
-        )
+        async with _sem:
+            await loop.run_in_executor(
+                None,
+                process_video_sync,
+                task_id, image_path, audio_path, text, settings
+            )
     except asyncio.CancelledError:
         # Mark task as failed but do not crash the request pipeline
         logger.warning(f"Video processing task cancelled: {task_id}")
@@ -874,6 +879,50 @@ async def generate_advanced_video(
         logger.error(f"Failed to create advanced task: {e}")
         tasks[task_id]["status"] = "failed"
         tasks[task_id]["error"] = str(e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/generate/batch")
+async def generate_batch(
+    images: List[UploadFile] = File(...),
+    audios: Optional[List[UploadFile]] = File(None),
+    texts: Optional[List[str]] = Form(None),
+    resolution: str = Form("720p"),
+    fps: int = Form(25)
+):
+    """Batch generation: schedules multiple tasks and returns task_ids."""
+    task_ids: List[str] = []
+    try:
+        for idx, image in enumerate(images):
+            task_id = str(uuid.uuid4())
+            tasks[task_id] = {"status": "processing", "progress": 0, "stage": "Queued", "created_at": time.time()}
+
+            image_path = TEMP_DIR / f"{task_id}_{image.filename}"
+            with open(image_path, "wb") as f:
+                f.write(await image.read())
+
+            audio_path = None
+            if audios and idx < len(audios) and audios[idx] is not None:
+                audio_file = audios[idx]
+                audio_path = TEMP_DIR / f"{task_id}_{audio_file.filename}"
+                with open(audio_path, "wb") as f:
+                    f.write(await audio_file.read())
+
+            text = None
+            if texts and idx < len(texts):
+                text = texts[idx]
+
+            settings = {"resolution": resolution, "fps": fps}
+
+            asyncio.create_task(
+                process_video_async(
+                    task_id, str(image_path), str(audio_path) if audio_path else None, text, settings
+                )
+            )
+
+            task_ids.append(task_id)
+
+        return {"success": True, "task_ids": task_ids, "count": len(task_ids)}
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/status/{task_id}")

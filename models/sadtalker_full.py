@@ -3,13 +3,14 @@ Full SadTalker Implementation with Neural Networks
 """
 
 import os
+import hashlib
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import cv2
 from typing import Optional, Dict, Any, Tuple
-from pathlib import Path
 import librosa
 from scipy.spatial.transform import Rotation as R
 
@@ -177,11 +178,26 @@ class SadTalkerFull(BaseModel):
                 # Initialize with random weights (for demo)
                 self._initialize_weights()
             
+            # Optional quantization / mixed precision for performance
+            try:
+                import torch.quantization as tq
+                if self.device == 'cpu':
+                    # Dynamic quantization on Linear layers (CPU only)
+                    self.audio2exp = tq.quantize_dynamic(self.audio2exp, {nn.Linear}, dtype=torch.qint8)
+                    self.audio2pose = tq.quantize_dynamic(self.audio2pose, {nn.Linear}, dtype=torch.qint8)
+                else:
+                    # Half precision on CUDA if available
+                    self.audio2exp.half()
+                    self.audio2pose.half()
+                    self.face_renderer.half()
+            except Exception:
+                pass
+
             # Set to eval mode
             self.audio2exp.eval()
             self.audio2pose.eval()
             self.face_renderer.eval()
-            
+
             self.initialized = True
             
         except Exception as e:
@@ -219,25 +235,46 @@ class SadTalkerFull(BaseModel):
     def extract_audio_features(self, audio_path: str) -> torch.Tensor:
         """Extract mel-spectrogram features from audio"""
         try:
+            # Cache setup
+            cache_dir = Path('temp')
+            cache_dir.mkdir(exist_ok=True)
+            h = hashlib.sha1()
+            try:
+                stat = os.stat(audio_path)
+                h.update(f"{audio_path}:{stat.st_mtime_ns}".encode())
+            except Exception:
+                h.update(audio_path.encode())
+            cache_file = cache_dir / f"cache_{h.hexdigest()}_mel.npy"
+
+            if cache_file.exists():
+                arr = np.load(cache_file)
+                return torch.from_numpy(arr).to(self.device)
+
             # Load audio
             audio, sr = librosa.load(audio_path, sr=16000)
-            
+
             # Extract mel-spectrogram
             mel_spec = librosa.feature.melspectrogram(
-                y=audio, sr=sr, n_mels=self.audio_dim, 
+                y=audio, sr=sr, n_mels=self.audio_dim,
                 hop_length=320, win_length=640
             )
-            
+
             # Convert to log scale
             log_mel = librosa.power_to_db(mel_spec, ref=np.max)
-            
+
             # Normalize
             log_mel = (log_mel - log_mel.mean()) / (log_mel.std() + 1e-8)
-            
-            # Convert to tensor
-            audio_features = torch.FloatTensor(log_mel.T).to(self.device)
-            
-            return audio_features
+
+            # T x F tensor
+            audio_features = torch.FloatTensor(log_mel.T)
+
+            # Save cache
+            try:
+                np.save(cache_file, audio_features.numpy())
+            except Exception:
+                pass
+
+            return audio_features.to(self.device)
             
         except Exception as e:
             # Fallback: generate dummy features
@@ -247,25 +284,55 @@ class SadTalkerFull(BaseModel):
     
     def preprocess_image(self, image_path: str) -> Tuple[torch.Tensor, np.ndarray]:
         """Preprocess source image"""
+        # Try cached face crop
+        cache_dir = Path('temp')
+        cache_dir.mkdir(exist_ok=True)
+        h = hashlib.sha1()
+        try:
+            stat = os.stat(image_path)
+            h.update(f"{image_path}:{stat.st_mtime_ns}".encode())
+        except Exception:
+            h.update(image_path.encode())
+        cache_file = cache_dir / f"cache_{h.hexdigest()}_face.npy"
+
+        if cache_file.exists():
+            try:
+                face_img = np.load(cache_file)
+                face_tensor = torch.FloatTensor(face_img).permute(2, 0, 1) / 255.0
+                face_tensor = face_tensor.unsqueeze(0)
+                # match precision
+                if next(self.face_renderer.parameters()).dtype == torch.float16:
+                    face_tensor = face_tensor.half()
+                return face_tensor.to(self.device), np.array([])
+            except Exception:
+                pass
+
         # Load image
         image = cv2.imread(image_path)
         if image is None:
             raise ValueError(f"Could not load image: {image_path}")
-        
+
         # Detect landmarks
         landmarks = self.landmark_detector.detect_landmarks(image)
-        
+
         # Crop and align face
         face_img = self._crop_face(image, landmarks)
-        
+
         # Resize to model input size
         face_img = cv2.resize(face_img, (self.img_size, self.img_size))
-        
+
+        # Save cache
+        try:
+            np.save(cache_file, face_img)
+        except Exception:
+            pass
+
         # Convert to tensor
         face_tensor = torch.FloatTensor(face_img).permute(2, 0, 1) / 255.0
-        face_tensor = face_tensor.unsqueeze(0).to(self.device)
-        
-        return face_tensor, landmarks
+        face_tensor = face_tensor.unsqueeze(0)
+        if next(self.face_renderer.parameters()).dtype == torch.float16:
+            face_tensor = face_tensor.half()
+        return face_tensor.to(self.device), landmarks
     
     def _crop_face(self, image: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
         """Crop face region from image"""
