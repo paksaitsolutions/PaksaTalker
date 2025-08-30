@@ -215,8 +215,10 @@ from api.routes import get_task_status as v1_get_task_status
 from api.routes import generate_advanced_video as v1_generate_advanced_video
 from api.websocket_routes import router as websocket_router
 from api.prompt_endpoints import router as prompt_router
+from api.conversation_endpoints import router as convo_router
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(prompt_router, prefix="/api/v1")
+app.include_router(convo_router, prefix="/api/v1")
 app.include_router(websocket_router)
 
 # Serve SPA - catch all other routes and return the frontend

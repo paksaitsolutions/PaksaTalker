@@ -49,3 +49,6 @@ yarn-error.log*
 # Local development
 temp/
 output/
+# Ignore all .git directories except the root one
+**/.git/
+!/.git/

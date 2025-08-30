@@ -54,6 +54,40 @@ def _wav2lip2_available() -> bool:
     except Exception:
         return False
 
+def _apply_advanced_effects(input_video: str, profile: str = "cinematic") -> Optional[str]:
+    """Apply lightweight post effects with ffmpeg. Returns output path or None on failure."""
+    try:
+        ffmpeg_cmd = _find_ffmpeg() or 'ffmpeg'
+        import subprocess, os
+        temp_out = str(Path(input_video).with_name(Path(input_video).stem + "_fx.mp4"))
+
+        # Define simple profiles
+        if profile == 'none':
+            return None
+        elif profile == 'sharpen':
+            vf = "format=yuv420p,unsharp=5:5:0.8:5:5:0.0"
+        elif profile == 'portrait':
+            vf = "format=yuv420p,eq=contrast=1.05:saturation=1.12:brightness=0.02,unsharp=3:3:0.6:3:3:0.0"
+        else:  # cinematic default
+            vf = "format=yuv420p,unsharp=5:5:0.8:5:5:0.0,eq=contrast=1.08:saturation=1.1,vignette"
+
+        cmd = [
+            ffmpeg_cmd, '-y',
+            '-i', input_video,
+            '-vf', vf,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+            '-c:a', 'aac', '-b:a', '128k',
+            '-movflags', '+faststart',
+            temp_out
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if result.returncode == 0 and os.path.exists(temp_out) and os.path.getsize(temp_out) > 10000:
+            os.replace(temp_out, input_video)
+            return input_video
+    except Exception as e:
+        logger.warning(f"Advanced effects failed: {e}")
+    return None
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -465,6 +499,12 @@ def process_video_sync(
         
         # Step 5: Finalize
         time.sleep(1)
+        # Apply lightweight advanced effects (optional)
+        try:
+            effects_profile = (settings or {}).get('effects', 'cinematic')
+            _apply_advanced_effects(str(output_path), effects_profile)
+        except Exception as e:
+            logger.warning(f"Skipping effects: {e}")
         tasks[task_id]["progress"] = 100
         tasks[task_id]["status"] = "completed"
         tasks[task_id]["stage"] = "Video generation completed"
