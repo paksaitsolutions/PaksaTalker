@@ -61,3 +61,10 @@ output/
 # Ignore embedded repositories
 /EMAGE/
 /PaksaTalker/PaksaTalker/
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Submodules
+/EMAGE/
