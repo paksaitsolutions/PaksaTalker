@@ -351,3 +351,59 @@ kubectl apply -f k8s/
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Appendices
+
+### A. Model Assets & Prefetch
+
+- On `stable_server.py` startup, background tasks attempt to ensure:
+  - Emotion (mini‑XCEPTION) weights
+  - EMAGE checkpoint `emage_best.pth`
+  - OpenSeeFace `models/` directory
+- Manual ensure endpoint:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/assets/ensure
+```
+
+Environment overrides:
+
+- `PAKSA_EMAGE_ROOT` or `EMAGE_ROOT` → path to EMAGE Python repo (must contain `models/gesture_decoder.py`, etc.)
+- `PAKSA_OSF_ROOT` or `OPENSEEFACE_ROOT` → path to OpenSeeFace folder (must contain `models/` with required `.onnx`)
+
+### B. Fusion Background & Green‑Screen
+
+`POST /api/v1/generate/fusion-video`
+
+Optional form fields for background:
+
+- `backgroundMode`: `none|blur|portrait|cinematic|color|image|greenscreen`
+- `backgroundColor`: hex color (used with `color`/`greenscreen`)
+- `backgroundImage`: file (used with `image`/`greenscreen`)
+- `chromaColor`, `similarity`, `blend`: chroma key tuning for green‑screen
+
+Implementation uses ffmpeg filters (`chromakey`, `overlay`, `eq`, `unsharp`).
+
+### C. AI Style Suggestions (MVP)
+
+Suggest best presets given hints:
+
+```
+POST /api/v1/style-presets/suggest
+  prompt (optional)
+  emotion (optional)
+  cultural_context (optional; e.g., GLOBAL, EAST_ASIAN)
+  formality (optional; float 0..1)
+```
+
+Returns `{ success, suggestions: [preset...] }`.
+
+### D. Lazy Model Imports
+
+`models/__init__.py` provides lazy re‑exports to avoid heavy imports at package import time.
+
+```python
+from models import FusionEngine, get_emage_model, get_wav2lip2_model
+```

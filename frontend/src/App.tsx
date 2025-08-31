@@ -11,6 +11,7 @@ interface GenerationSettings {
   background: string
   backgroundMode?: 'none' | 'blur' | 'portrait' | 'cinematic' | 'color' | 'image' | 'greenscreen'
   backgroundColor?: string
+  requireEmage?: boolean
   enhanceFace: boolean
   stabilization: boolean
   stylePreset?: any
@@ -45,6 +46,7 @@ function App() {
     background: 'blur',
     backgroundMode: 'none',
     backgroundColor: '#000000',
+    requireEmage: false,
     enhanceFace: true,
     stabilization: true,
     stylePreset: null,
@@ -65,6 +67,7 @@ function App() {
 
   const [exprPreview, setExprPreview] = useState<{engine?: string; topBlend?: Array<[string, number]>; topEmotion?: [string, number]}>({})
   const [bgImageFile, setBgImageFile] = useState<File | null>(null)
+  const [modal, setModal] = useState<{ title: string; message: string } | null>(null)
 
   // Backend capabilities for auto-toggle of advanced features
   interface BackendCaps { models: { sadtalker: boolean; wav2lip2: boolean; emage: boolean; qwen: boolean; sadtalker_weights?: boolean; mediapipe?: boolean; threeddfa?: boolean; openseeface?: boolean; mini_xception?: boolean } }
@@ -139,6 +142,17 @@ function App() {
           if (settings.preferWav2Lip2) formData.append('preferWav2Lip2', 'true')
           // No image/audio: endpoint will synthesize TTS and default avatar
           const resp = await fetch('/api/v1/generate/fusion-video', { method: 'POST', body: formData })
+          if (!resp.ok) {
+            let err: any = null
+            try { err = await resp.json() } catch {}
+            if (resp.status === 503) {
+              const msg = err?.detail || 'EMAGE not available. Please configure EMAGE repo and weights.'
+              setModal({ title: 'EMAGE Not Available', message: msg })
+              setProgress({ status: 'error', progress: 0, stage: 'EMAGE unavailable', error: msg })
+              return
+            }
+            throw new Error(err?.detail || err?.message || `HTTP ${resp.status}`)
+          }
           data = await resp.json()
         } else {
           data = await generateVideoFromPrompt(formData)
@@ -163,10 +177,22 @@ function App() {
           if (settings.mode === 'fusion') {
             // Call Fusion API
             if (settings.preferWav2Lip2) formData.append('preferWav2Lip2', 'true')
+            if (settings.requireEmage) formData.append('requireEmage', 'true')
             if (settings.backgroundMode) formData.append('backgroundMode', settings.backgroundMode)
             if (settings.backgroundColor) formData.append('backgroundColor', settings.backgroundColor)
             if (bgImageFile) formData.append('backgroundImage', bgImageFile)
             const resp = await fetch('/api/v1/generate/fusion-video', { method: 'POST', body: formData })
+            if (!resp.ok) {
+              let err: any = null
+              try { err = await resp.json() } catch {}
+              if (resp.status === 503) {
+                const msg = err?.detail || 'EMAGE not available. Please configure EMAGE repo and weights.'
+                setModal({ title: 'EMAGE Not Available', message: msg })
+                setProgress({ status: 'error', progress: 0, stage: 'EMAGE unavailable', error: msg })
+                return
+              }
+              throw new Error(err?.detail || err?.message || `HTTP ${resp.status}`)
+            }
             data = await resp.json()
         } else if (canEmage || canW2L) {
           formData.append('useSadTalkerFull', 'true')
@@ -294,6 +320,20 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
+        {modal && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-5">
+              <div className="flex items-start justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">{modal.title}</h3>
+                <button onClick={()=> setModal(null)} className="text-gray-500 hover:text-gray-700">✕</button>
+              </div>
+              <div className="mt-3 text-sm text-gray-700 whitespace-pre-wrap">{modal.message}</div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={()=> setModal(null)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">OK</button>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-4">
@@ -971,6 +1011,20 @@ function App() {
                   <option value="mini_xception">mini-XCEPTION (Emotions)</option>
                 </select>
                 <p className="text-xs text-gray-400 mt-1">Select the expression estimator to guide animation.</p>
+              </div>
+
+              {/* Require EMAGE toggle */}
+              <div className="mt-4">
+                <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={!!settings.requireEmage}
+                    onChange={(e)=> setSettings({ ...settings, requireEmage: e.target.checked })}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  Require EMAGE (wait or show error)
+                </label>
+                <p className="text-xs text-gray-400 mt-1">When enabled, generation waits for EMAGE availability and returns a clear error if not ready.</p>
               </div>
 
               {/* Expression quick preview */}

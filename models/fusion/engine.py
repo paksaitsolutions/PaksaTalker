@@ -248,7 +248,8 @@ class FusionEngine:
         style: str = 'natural',
         fps: int = 25,
         resolution: str = '720p',
-        prefer_wav2lip2: bool = False
+        prefer_wav2lip2: bool = False,
+        use_emage: Optional[bool] = None
     ) -> str:
         log = logging.getLogger(__name__)
 
@@ -313,21 +314,41 @@ class FusionEngine:
 
         fps_use = face_fps or float(fps)
 
-        # 2) Generate body track (EMAGE preferred)
+        # 2) Generate body track (EMAGE preferred, unless disabled/unavailable)
         body_video = None
-        try:
-            from models.emage_realistic import get_emage_model
-            emage = get_emage_model()
-            body_video = emage.generate_full_video(
-                audio_path=audio_path,
-                output_path=body_path,
-                emotion=emotion,
-                style=style,
-                avatar_type='realistic'
-            )
-        except Exception as e:
-            log.warning(f"EMAGE body generation failed; using placeholder. Reason: {e}")
-            # Determine duration from face track
+        # Determine whether to use EMAGE
+        emage_allowed = True
+        if use_emage is not None:
+            emage_allowed = bool(use_emage)
+        env_disable = os.environ.get('PAKSA_DISABLE_EMAGE') in ('1', 'true', 'True', 'yes')
+        if env_disable:
+            emage_allowed = False
+        # If allowed, ensure it appears available
+        if emage_allowed:
+            try:
+                from models.emage_realistic import emage_available  # type: ignore
+                if not emage_available():
+                    emage_allowed = False
+            except Exception:
+                emage_allowed = False
+
+        if emage_allowed:
+            try:
+                from models.emage_realistic import get_emage_model
+                emage = get_emage_model()
+                body_video = emage.generate_full_video(
+                    audio_path=audio_path,
+                    output_path=body_path,
+                    emotion=emotion,
+                    style=style,
+                    avatar_type='realistic'
+                )
+            except Exception as e:
+                log.warning(f"EMAGE body generation failed; using placeholder. Reason: {e}")
+                body_video = None
+
+        if body_video is None:
+            # Placeholder body track
             try:
                 cap_tmp, Wp, Hp, _ = _read_video_frames(face_track)
                 total = int(cap_tmp.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
@@ -338,6 +359,7 @@ class FusionEngine:
             except Exception:
                 duration = 5.0
                 Wp, Hp = _parse_resolution(resolution)
+            log.info("Using placeholder body track (EMAGE disabled or unavailable)")
             body_video = _placeholder_body_video(body_path, duration, fps_use, (Wp or WF_probe, Hp or HF_probe))
 
         # 3) Head bboxes per frame

@@ -467,3 +467,39 @@ Project Link: [https://github.com/yourusername/paksatalker](https://github.com/y
 - [Wav2Lip](https://github.com/Rudrabha/Wav2Lip) - For lip-sync technology
 - [Qwen](https://github.com/QwenLM/Qwen) - For advanced language modeling
 - All contributors and open-source maintainers who made this project possible
+
+
+
+## Quick Start (Stable Server)
+
+Run the bundled stable server with fallbacks and background asset prefetch:
+
+```
+python stable_server.py
+# API: http://localhost:8000
+# Swagger UI: http://localhost:8000/api/docs
+```
+
+Optionally force asset ensure:
+
+```
+curl -X POST http://localhost:8000/api/v1/assets/ensure
+```
+
+### Fusion Background & Green‑Screen
+
+`POST /api/v1/generate/fusion-video` supports optional background parameters:
+
+- `backgroundMode`: `none|blur|portrait|cinematic|color|image|greenscreen`
+- `backgroundColor`: hex (for color/greenscreen)
+- `backgroundImage`: file (for image/greenscreen)
+- `chromaColor`, `similarity`, `blend`: green‑screen chroma key tuning
+
+### AI Style Suggestions (MVP)
+
+Suggest presets matching your context:
+
+```
+curl -X POST http://localhost:8000/api/v1/style-presets/suggest \
+  -F prompt="energetic keynote" -F cultural_context=GLOBAL -F formality=0.7
+```

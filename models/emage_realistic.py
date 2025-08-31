@@ -153,6 +153,30 @@ class EMageRealistic:
         except Exception as e:
             logger.error(f"Failed to load EMAGE model: {e}")
             raise
+
+
+def emage_available() -> bool:
+    """Lightweight check to determine if EMAGE python repo + weights are present.
+
+    Returns True if required modules and checkpoint are available, without importing heavy modules.
+    """
+    try:
+        import os
+        from pathlib import Path as _P
+        override = os.environ.get("PAKSA_EMAGE_ROOT") or os.environ.get("EMAGE_ROOT")
+        repo = _P(override) if override else _P("EMAGE")
+        if not repo.exists():
+            return False
+        models_dir = repo / "models"
+        checkpoints_dir = repo / "checkpoints"
+        has_code = (
+            (models_dir / "gesture_decoder.py").exists()
+            or (models_dir / "gesture_decoder" / "__init__.py").exists()
+        ) and (models_dir / "audio_encoder.py").exists()
+        has_ckpt = (checkpoints_dir / "emage_best.pth").exists()
+        return bool(has_code and has_ckpt)
+    except Exception:
+        return False
     
     def _download_weights(self, checkpoint_path: Path):
         """Download EMAGE pretrained weights"""

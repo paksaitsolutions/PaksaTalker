@@ -444,6 +444,9 @@ async def fusion_video_alias(request: Request):
         emotion = form.get('emotion') or 'neutral'
         style = form.get('style') or 'natural'
         preferWav2Lip2 = form.get('preferWav2Lip2') in ('true', '1', 'yes', True)
+        useEmage = form.get('useEmage')
+        if useEmage is not None:
+            useEmage = useEmage in ('true', '1', 'yes', True)
         # Background customization
         bg_mode = (form.get('backgroundMode') or form.get('background') or 'none').lower()
         bg_color = form.get('backgroundColor') or '#000000'
@@ -504,6 +507,32 @@ async def fusion_video_alias(request: Request):
                 with open(img_path, 'wb') as f:
                     f.write(b'avatar')
 
+        # If user requires EMAGE, wait (with timeout) for availability
+        reqEmage = form.get('requireEmage') in ('true','1','yes', True)
+        if reqEmage:
+            try:
+                from models.emage_realistic import emage_available  # type: ignore
+                from models.emotion.model_loader import ensure_emage_weights  # type: ignore
+                # Attempt to ensure weights, then wait up to 30s for availability
+                try:
+                    await asyncio.to_thread(ensure_emage_weights)
+                except Exception:
+                    pass
+                deadline = time.time() + 30
+                while time.time() < deadline and not emage_available():
+                    await asyncio.sleep(1.0)
+                if not emage_available():
+                    return JSONResponse({
+                        "success": False,
+                        "detail": "EMAGE not available. Please set PAKSA_EMAGE_ROOT to the EMAGE Python repo and ensure checkpoints/emage_best.pth.",
+                        "hint": {
+                            "env": "PAKSA_EMAGE_ROOT or EMAGE_ROOT",
+                            "expected_files": ["models/gesture_decoder.py", "models/audio_encoder.py", "checkpoints/emage_best.pth"]
+                        }
+                    }, status_code=503)
+            except Exception:
+                return JSONResponse({"success": False, "detail": "EMAGE not available and cannot be ensured."}, status_code=503)
+
         # Create task
         task_id = str(_uuid.uuid4())
         tasks[task_id] = {"status": "processing", "progress": 5, "stage": "Queued"}
@@ -524,7 +553,8 @@ async def fusion_video_alias(request: Request):
                     style=style,
                     fps=fps,
                     resolution=resolution,
-                    prefer_wav2lip2=preferWav2Lip2
+                    prefer_wav2lip2=preferWav2Lip2,
+                    use_emage=useEmage if isinstance(useEmage, bool) else None
                 )
                 # Optional background processing
                 bg_path = None

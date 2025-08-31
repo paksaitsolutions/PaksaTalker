@@ -127,6 +127,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+AUTH_DISABLED = os.environ.get('PAKSA_AUTH_DISABLED') in ('1','true','True','yes')
 
 # Mock database (replace with real database in production)
 fake_users_db = {}
@@ -337,6 +338,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
+    if AUTH_DISABLED:
+        # Bypass auth completely during development
+        return User(username="anonymous", email=None, full_name=None, disabled=False)
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -412,6 +416,10 @@ async def save_upload_file(upload_file: UploadFile, directory: str) -> str:
 @router.post("/auth/login")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     try:
+        if AUTH_DISABLED:
+            # Return a dummy token when auth is disabled
+            access_token = create_access_token({"sub": "anonymous"}, expires_delta=timedelta(days=30))
+            return {"access_token": access_token, "token_type": "bearer"}
         username = form_data.username
         password = form_data.password
         
