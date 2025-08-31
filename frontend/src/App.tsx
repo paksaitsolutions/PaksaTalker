@@ -12,6 +12,9 @@ interface GenerationSettings {
   enhanceFace: boolean
   stabilization: boolean
   stylePreset?: any
+  expressionEngine?: 'auto' | 'mediapipe' | 'threeddfa' | 'openseeface' | 'mini_xception'
+  mode?: 'standard' | 'fusion'
+  preferWav2Lip2?: boolean
 }
 
 interface GenerationProgress {
@@ -37,7 +40,10 @@ function App() {
     background: 'blur',
     enhanceFace: true,
     stabilization: true,
-    stylePreset: null
+    stylePreset: null,
+    expressionEngine: 'auto',
+    mode: 'standard',
+    preferWav2Lip2: false
   })
   const [progress, setProgress] = useState<GenerationProgress>({
     status: 'idle',
@@ -49,8 +55,11 @@ function App() {
   const audioInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
 
+  const [exprPreview, setExprPreview] = useState<{engine?: string; topBlend?: Array<[string, number]>; topEmotion?: [string, number]}>({})
+
   // Backend capabilities for auto-toggle of advanced features
-  const [caps, setCaps] = useState<{models:{sadtalker:boolean;wav2lip2:boolean;emage:boolean;qwen:boolean}}|null>(null)
+  interface BackendCaps { models: { sadtalker: boolean; wav2lip2: boolean; emage: boolean; qwen: boolean; sadtalker_weights?: boolean; mediapipe?: boolean; threeddfa?: boolean; openseeface?: boolean; mini_xception?: boolean } }
+  const [caps, setCaps] = useState<BackendCaps|null>(null)
   useEffect(() => {
     fetch('/api/v1/capabilities')
       .then(r => r.ok ? r.json() : null)
@@ -60,9 +69,34 @@ function App() {
       .catch(() => {})
   }, [])
 
-  const handleGenerate = async () => {
-    const isPromptBased = textPrompt && !imageFile && !audioFile
-    const isFileBased = imageFile && (audioFile || textPrompt)
+  // Update expression preview whenever image or engine changes
+  useEffect(() => {
+    if (!imageFile) { setExprPreview({}); return }
+    const run = async () => {
+      try {
+        const res = await (await fetch('/api/v1/expressions/capabilities')).json()
+        if (!res || res.success === false) return
+        const form = new FormData()
+        form.append('image', imageFile)
+        form.append('engine', settings.expressionEngine || 'auto')
+        const r = await fetch('/api/v1/expressions/estimate', { method: 'POST', body: form })
+        const j = await r.json()
+        if (j && j.success && j.result) {
+          const eng = j.engine || j.result.engine
+          const blend = j.result.blendshapes || {}
+          const emo = j.result.emotion_probs || {}
+          const topBlend = Object.entries(blend).sort((a:any,b:any)=> (b[1] as number)-(a[1] as number)).slice(0,5) as Array<[string, number]>
+          const topEmotion = Object.entries(emo).sort((a:any,b:any)=> (b[1] as number)-(a[1] as number))[0] as [string, number] | undefined
+          setExprPreview({ engine: eng, topBlend, topEmotion })
+        }
+      } catch {}
+    }
+    run()
+  }, [imageFile, settings.expressionEngine])
+
+  const handleGenerate = async (mode?: 'prompt' | 'media') => {
+    const isPromptBased = mode === 'prompt' || (!!textPrompt && !imageFile && !audioFile)
+    const isFileBased = mode === 'media' || (!!imageFile && (!!audioFile || !!textPrompt))
     
     if (!isPromptBased && !isFileBased) {
       setProgress({
@@ -86,8 +120,15 @@ function App() {
         formData.append('resolution', settings.resolution)
         formData.append('fps', settings.fps.toString())
         formData.append('gestureLevel', settings.gestureLevel)
-        
-        data = await generateVideoFromPrompt(formData)
+        if (settings.expressionEngine) formData.append('expressionEngine', settings.expressionEngine)
+        if (settings.mode === 'fusion') {
+          if (settings.preferWav2Lip2) formData.append('preferWav2Lip2', 'true')
+          // No image/audio: endpoint will synthesize TTS and default avatar
+          const resp = await fetch('/api/v1/generate/fusion-video', { method: 'POST', body: formData })
+          data = await resp.json()
+        } else {
+          data = await generateVideoFromPrompt(formData)
+        }
       } else {
         formData.append('image', imageFile!)
         if (audioFile) {
@@ -100,11 +141,17 @@ function App() {
         // Basic settings
         formData.append('resolution', settings.resolution)
         formData.append('fps', settings.fps.toString())
+        if (settings.expressionEngine) formData.append('expressionEngine', settings.expressionEngine)
 
         const canEmage = caps?.models?.emage
         const canW2L = caps?.models?.wav2lip2
 
-        if (canEmage || canW2L) {
+        if (settings.mode === 'fusion') {
+          // Call Fusion API
+          if (settings.preferWav2Lip2) formData.append('preferWav2Lip2', 'true')
+          const resp = await fetch('/api/v1/generate/fusion-video', { method: 'POST', body: formData })
+          data = await resp.json()
+        } else if (canEmage || canW2L) {
           formData.append('useSadTalkerFull', 'true')
           formData.append('useEmage', canEmage ? 'true' : 'false')
           formData.append('useWav2Lip2', canW2L ? 'true' : 'false')
@@ -282,6 +329,21 @@ function App() {
               </svg>
               Paksa IT Solutions
             </a>
+            {/* Fusion quick entry */}
+            <button
+              onClick={() => {
+                setSettings(prev => ({ ...prev, mode: 'fusion' }))
+                const el = document.getElementById('settings')
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }}
+              title={`Fusion mode: requires EMAGE ${caps?.models?.emage ? '✓' : '✗'} and audio/prompt. Optional SadTalker ${caps?.models?.sadtalker_weights ? '✓' : '✗'}, Wav2Lip2 ${caps?.models?.wav2lip2 ? '✓' : '✗'}.`}
+              className={`inline-flex items-center px-4 py-2 rounded-lg transition-colors text-sm font-medium shadow-md hover:shadow-lg ${settings.mode==='fusion' ? 'bg-purple-700 text-white' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h6l2 3h10M12 20l9-12" />
+              </svg>
+              Fusion Mode
+            </button>
           </div>
         </div>
 
@@ -381,7 +443,7 @@ function App() {
             <div className="mt-6">
               {progress.status !== 'processing' ? (
                 <button
-                  onClick={handleGenerate}
+                  onClick={() => handleGenerate('media')}
                   disabled={!imageFile || (!audioFile && !textPrompt)}
                   className={`w-full py-3 px-6 rounded-lg font-medium text-sm transition-colors ${
                     imageFile && (audioFile || textPrompt)
@@ -700,10 +762,10 @@ function App() {
             <div>
               {progress.status !== 'processing' ? (
                 <button
-                  onClick={handleGenerate}
-                  disabled={!textPrompt || !!(imageFile || audioFile)}
+                  onClick={() => handleGenerate('prompt')}
+                  disabled={!textPrompt}
                   className={`w-full py-3 px-6 rounded-lg font-medium text-sm transition-colors ${
-                    textPrompt && !imageFile && !audioFile
+                    textPrompt
                       ? 'bg-purple-600 text-white hover:bg-purple-700'
                       : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   }`}
@@ -735,13 +797,10 @@ function App() {
             </div>
           </div>
 
-          {/* Section 3: Style Customization (Bottom Left) */}
-          <StyleCustomization 
-            onStyleChange={(preset) => setSettings(prev => ({ ...prev, stylePreset: preset }))}
-          />
+          {/* Section 3 removed: StyleCustomization moved inside unified settings panel */}
 
-          {/* Section 4: Generation Settings (Bottom Right) - moved from bottom left */}
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+          {/* Section 4: Unified Settings (Bottom Right) */}
+          <div id="settings" className="bg-white rounded-xl shadow-lg p-6 border border-gray-200 col-span-1 lg:col-span-1">
             <div className="flex items-center mb-6">
               <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center mr-3 shadow-lg">
                 <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -749,7 +808,7 @@ function App() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Generation Settings</h2>
+              <h2 className="text-xl font-semibold text-gray-900">PaksaTalker Settings</h2>
             </div>
             
             <div className="space-y-4">
@@ -786,6 +845,33 @@ function App() {
                     <option value={60}>60 FPS</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Fusion Mode Toggle */}
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-purple-900">Fusion Mode (Face + Body)</div>
+                    <div className="text-xs text-purple-700">Composites SadTalker face over full-body track</div>
+                  </div>
+                  <label className="inline-flex items-center cursor-pointer">
+                    <input type="checkbox" className="sr-only" checked={settings.mode === 'fusion'} onChange={(e)=> setSettings({...settings, mode: e.target.checked ? 'fusion' : 'standard'})} />
+                    <div className="w-10 h-6 bg-purple-200 rounded-full p-1 duration-300 ease-in-out">
+                      <div className={`bg-white w-4 h-4 rounded-full shadow-md transform duration-300 ease-in-out ${settings.mode==='fusion' ? 'translate-x-4' : ''}`}></div>
+                    </div>
+                  </label>
+                </div>
+                {settings.mode==='fusion' && (
+                  <div className="mt-2 space-y-1">
+                    <label className="flex items-center">
+                      <input type="checkbox" className="mr-2" checked={!!settings.preferWav2Lip2} onChange={(e)=> setSettings({...settings, preferWav2Lip2: e.target.checked})} />
+                      <span className="text-xs text-purple-800">Prefer Wav2Lip2 face (tighter lips)</span>
+                    </label>
+                    <div className="text-xs text-purple-800">
+                      Status: SadTalker {caps?.models?.sadtalker_weights ? 'Ready' : 'Not found'} · Wav2Lip2 {caps?.models?.wav2lip2 ? 'Ready' : 'Not found'}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -835,6 +921,48 @@ function App() {
                 </div>
               </div>
 
+              {/* Expression Engine */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Expression Engine</label>
+                <select
+                  value={settings.expressionEngine}
+                  onChange={(e) => setSettings({...settings, expressionEngine: e.target.value as any})}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                >
+                  <option value="auto">Auto</option>
+                  <option value="mediapipe">MediaPipe (Blendshapes)</option>
+                  <option value="threeddfa">3DDFA (3DMM)</option>
+                  <option value="openseeface">OpenSeeFace (Landmarks)</option>
+                  <option value="mini_xception">mini-XCEPTION (Emotions)</option>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Select the expression estimator to guide animation.</p>
+              </div>
+
+              {/* Expression quick preview */}
+              {exprPreview.engine && (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  <div className="text-sm font-medium text-gray-700 mb-2">Expression Preview</div>
+                  <div className="text-xs text-gray-600">Engine: {exprPreview.engine}</div>
+                  {exprPreview.topEmotion && (
+                    <div className="text-xs text-gray-600">Emotion: {exprPreview.topEmotion[0]} ({(exprPreview.topEmotion[1]*100).toFixed(0)}%)</div>
+                  )}
+                  {exprPreview.topBlend && exprPreview.topBlend.length > 0 && (
+                    <div className="mt-2">
+                      <div className="text-xs text-gray-600 mb-1">Top blendshapes:</div>
+                      {exprPreview.topBlend.map(([k,v]) => (
+                        <div key={k} className="flex items-center gap-2 text-xs text-gray-600">
+                          <div className="w-24 truncate">{k}</div>
+                          <div className="w-full bg-gray-200 h-1 rounded">
+                            <div className="bg-purple-500 h-1 rounded" style={{ width: `${Math.min(100, Math.max(0, v*100))}%`}}></div>
+                          </div>
+                          <div className="w-10 text-right">{(v*100).toFixed(0)}%</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex items-center space-x-6">
                 <label className="flex items-center">
                   <input
@@ -856,9 +984,13 @@ function App() {
                 </label>
               </div>
             </div>
-          </div>
+            </div>
 
-        </div>
+            {/* Embed Style Customization inside unified settings */}
+            <div className="mt-6">
+              <StyleCustomization onStyleChange={(preset) => setSettings(prev => ({ ...prev, stylePreset: preset }))} />
+            </div>
+          </div>
         
         {/* Second Row - Full Width */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
@@ -928,6 +1060,17 @@ function App() {
                 </div>
               )}
 
+              {/* Video Preview */}
+              {progress.status === 'completed' && progress.videoUrl && (
+                <div className="mb-4">
+                  <video
+                    src={progress.videoUrl}
+                    controls
+                    className="w-full rounded-lg border border-gray-200 shadow-sm"
+                  />
+                </div>
+              )}
+
               {/* Success & Download */}
               {progress.status === 'completed' && progress.videoUrl && (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
@@ -981,220 +1124,7 @@ function App() {
             </div>
           </div>
           
-          {/* Advanced Settings Panel (Right) */}
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
-            <div className="flex items-center mb-6">
-              <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-cyan-500 rounded-xl flex items-center justify-center mr-3 shadow-lg">
-                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100 4m0-4v2m0-6V4" />
-                </svg>
-              </div>
-              <h2 className="text-xl font-semibold text-gray-900">Advanced Controls</h2>
-            </div>
-            
-            {/* Current Style Display */}
-            {settings.stylePreset ? (
-              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <h3 className="font-medium text-blue-900 mb-2">Active Style</h3>
-                <div className="text-sm text-blue-800">
-                  <div className="font-medium">{settings.stylePreset.name}</div>
-                  <div className="text-xs mt-1">{settings.stylePreset.description}</div>
-                  <div className="mt-2 text-xs">
-                    Cultural Context: {settings.stylePreset.cultural_context}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
-                <h3 className="font-medium text-gray-700 mb-2">Default Style Active</h3>
-                <div className="text-sm text-gray-600">
-                  <div className="text-xs">No custom style selected. Using default animation settings.</div>
-                  <div className="mt-2 text-xs">
-                    Select a style preset from the Style Customization panel to unlock more options.
-                  </div>
-                </div>
-              </div>
-            )}
-            
-            {/* Mannerism Controls */}
-            <div className="space-y-4">
-              <h3 className="font-medium text-gray-900">Fine-Tune Mannerisms</h3>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Micro-Expression Rate: {(settings.stylePreset?.micro_expression_rate || 0.5).toFixed(2)}
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={settings.stylePreset?.micro_expression_rate || 0.5}
-                  onChange={(e) => {
-                    const value = parseFloat(e.target.value)
-                    if (settings.stylePreset) {
-                      const updated = { ...settings.stylePreset, micro_expression_rate: value }
-                      setSettings(prev => ({ ...prev, stylePreset: updated }))
-                    } else {
-                      // Create a default preset with the new value
-                      const defaultPreset = {
-                        preset_id: 'custom',
-                        name: 'Custom Style',
-                        description: 'User customized style',
-                        intensity: 0.7,
-                        smoothness: 0.8,
-                        expressiveness: 0.7,
-                        cultural_context: 'GLOBAL',
-                        formality: 0.5,
-                        gesture_frequency: 0.7,
-                        gesture_amplitude: 1.0,
-                        micro_expression_rate: value,
-                        breathing_intensity: 0.3,
-                        posture_variation: 0.4,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                      }
-                      setSettings(prev => ({ ...prev, stylePreset: defaultPreset }))
-                    }
-                  }}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Breathing Intensity: {(settings.stylePreset?.breathing_intensity || 0.3).toFixed(2)}
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={settings.stylePreset?.breathing_intensity || 0.3}
-                  onChange={(e) => {
-                    const value = parseFloat(e.target.value)
-                    if (settings.stylePreset) {
-                      const updated = { ...settings.stylePreset, breathing_intensity: value }
-                      setSettings(prev => ({ ...prev, stylePreset: updated }))
-                    } else {
-                      const defaultPreset = {
-                        preset_id: 'custom',
-                        name: 'Custom Style',
-                        description: 'User customized style',
-                        intensity: 0.7,
-                        smoothness: 0.8,
-                        expressiveness: 0.7,
-                        cultural_context: 'GLOBAL',
-                        formality: 0.5,
-                        gesture_frequency: 0.7,
-                        gesture_amplitude: 1.0,
-                        micro_expression_rate: 0.5,
-                        breathing_intensity: value,
-                        posture_variation: 0.4,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                      }
-                      setSettings(prev => ({ ...prev, stylePreset: defaultPreset }))
-                    }
-                  }}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Posture Variation: {(settings.stylePreset?.posture_variation || 0.4).toFixed(2)}
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={settings.stylePreset?.posture_variation || 0.4}
-                  onChange={(e) => {
-                    const value = parseFloat(e.target.value)
-                    if (settings.stylePreset) {
-                      const updated = { ...settings.stylePreset, posture_variation: value }
-                      setSettings(prev => ({ ...prev, stylePreset: updated }))
-                    } else {
-                      const defaultPreset = {
-                        preset_id: 'custom',
-                        name: 'Custom Style',
-                        description: 'User customized style',
-                        intensity: 0.7,
-                        smoothness: 0.8,
-                        expressiveness: 0.7,
-                        cultural_context: 'GLOBAL',
-                        formality: 0.5,
-                        gesture_frequency: 0.7,
-                        gesture_amplitude: 1.0,
-                        micro_expression_rate: 0.5,
-                        breathing_intensity: 0.3,
-                        posture_variation: value,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                      }
-                      setSettings(prev => ({ ...prev, stylePreset: defaultPreset }))
-                    }
-                  }}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                />
-              </div>
-              
-              {/* Cultural Context Override */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Cultural Context
-                </label>
-                <select 
-                  value={settings.stylePreset?.cultural_context || 'GLOBAL'}
-                  onChange={(e) => {
-                    const value = e.target.value
-                    if (settings.stylePreset) {
-                      const updated = { ...settings.stylePreset, cultural_context: value }
-                      setSettings(prev => ({ ...prev, stylePreset: updated }))
-                    } else {
-                      const defaultPreset = {
-                        preset_id: 'custom',
-                        name: 'Custom Style',
-                        description: 'User customized style',
-                        intensity: 0.7,
-                        smoothness: 0.8,
-                        expressiveness: 0.7,
-                        cultural_context: value,
-                        formality: 0.5,
-                        gesture_frequency: 0.7,
-                        gesture_amplitude: 1.0,
-                        micro_expression_rate: 0.5,
-                        breathing_intensity: 0.3,
-                        posture_variation: 0.4,
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                      }
-                      setSettings(prev => ({ ...prev, stylePreset: defaultPreset }))
-                    }
-                  }}
-                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                >
-                  <option value="GLOBAL">Global</option>
-                  <option value="WESTERN">Western</option>
-                  <option value="EAST_ASIAN">East Asian</option>
-                  <option value="MIDDLE_EASTERN">Middle Eastern</option>
-                  <option value="SOUTH_ASIAN">South Asian</option>
-                  <option value="LATIN_AMERICAN">Latin American</option>
-                  <option value="AFRICAN">African</option>
-                </select>
-              </div>
-              
-              {/* Reset to Default */}
-              <button
-                onClick={() => setSettings(prev => ({ ...prev, stylePreset: null }))}
-                className="w-full bg-gray-500 text-white py-2 px-4 rounded-lg hover:bg-gray-600 transition-colors text-sm font-medium"
-              >
-                Reset to Default Style
-              </button>
-            </div>
-          </div>
+          {/* Removed extra Advanced Settings panel; advanced controls are inside unified settings */}
         </div>
         
         {/* Footer with Copyright */}

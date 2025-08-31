@@ -24,29 +24,45 @@ class TTSService:
         # Azure Cognitive Services
         try:
             import azure.cognitiveservices.speech as speechsdk
-            self.providers['azure'] = self._init_azure()
+            azure_cfg = self._init_azure()
+            if azure_cfg is not None:
+                self.providers['azure'] = azure_cfg
         except ImportError:
             logger.warning("Azure Speech SDK not available")
         
-        # Google Cloud TTS
+        # gTTS (Free) - register early to avoid cloud deps
         try:
-            from google.cloud import texttospeech
-            self.providers['google'] = self._init_google()
-        except ImportError:
-            logger.warning("Google Cloud TTS not available")
+            from gtts import gTTS  # noqa: F401
+            self.providers['gtts'] = True
+            logger.info("gTTS provider enabled (free)")
+        except Exception:
+            logger.warning("gTTS not available; install with 'pip install gTTS'")
+
+        # Google Cloud TTS (guard all exceptions to avoid protobuf runtime issues)
+        try:
+            from google.cloud import texttospeech  # type: ignore
+            google_cli = self._init_google()
+            if google_cli is not None:
+                self.providers['google'] = google_cli
+        except Exception as e:
+            logger.warning(f"Google Cloud TTS not available ({e})")
         
         # Amazon Polly
         try:
             import boto3
-            self.providers['aws'] = self._init_aws()
+            aws_cli = self._init_aws()
+            if aws_cli is not None:
+                self.providers['aws'] = aws_cli
         except ImportError:
             logger.warning("AWS Polly not available")
         
         # ElevenLabs (Premium)
         try:
-            import elevenlabs
-            self.providers['elevenlabs'] = self._init_elevenlabs()
-        except ImportError:
+            import elevenlabs  # type: ignore
+            el_ok = self._init_elevenlabs()
+            if el_ok:
+                self.providers['elevenlabs'] = True
+        except Exception:
             logger.warning("ElevenLabs not available")
     
     def _init_azure(self):
@@ -109,7 +125,11 @@ class TTSService:
         """Generate speech from text using specified provider"""
         
         if provider == "auto":
-            provider = self._select_best_provider(voice)
+            # Prefer free gTTS when available, otherwise select by voice
+            if 'gtts' in self.providers:
+                provider = 'gtts'
+            else:
+                provider = self._select_best_provider(voice)
         
         if provider == "azure" and "azure" in self.providers:
             return self._generate_azure(text, voice, output_path)
@@ -119,6 +139,8 @@ class TTSService:
             return self._generate_aws(text, voice, output_path)
         elif provider == "elevenlabs" and "elevenlabs" in self.providers:
             return self._generate_elevenlabs(text, voice, output_path)
+        elif provider == "gtts" and "gtts" in self.providers:
+            return self._generate_gtts(text, voice, output_path)
         else:
             # Fallback to any available provider
             for available_provider in self.providers:
@@ -265,6 +287,56 @@ class TTSService:
             out.write(audio)
         
         return output_path
+
+    def _generate_gtts(self, text: str, voice: str, output_path: Optional[str]) -> str:
+        """Generate speech using gTTS (free). Writes MP3, converts to WAV if requested."""
+        from gtts import gTTS
+        import subprocess, shutil, tempfile
+
+        # Derive language from voice (e.g., en-US-... -> en or en-us)
+        lang = "en"
+        try:
+            if "-" in voice:
+                parts = voice.split("-")
+                # take first part as language code
+                lang = (parts[0] or "en").lower()
+        except Exception:
+            pass
+
+        # Create temp mp3
+        mp3_path = tempfile.mktemp(suffix='.mp3')
+        tts = gTTS(text=text, lang=lang)
+        tts.save(mp3_path)
+
+        # If output_path not specified, return MP3 directly
+        if not output_path:
+            return mp3_path
+
+        # If requested a WAV, try to convert using ffmpeg; otherwise copy MP3 to path
+        if str(output_path).lower().endswith('.wav'):
+            ffmpeg = shutil.which('ffmpeg')
+            if ffmpeg:
+                wav_path = output_path
+                cmd = [ffmpeg, '-y', '-i', mp3_path, '-ar', '22050', '-ac', '1', wav_path]
+                try:
+                    res = subprocess.run(cmd, capture_output=True, text=True)
+                    if res.returncode == 0:
+                        return wav_path
+                    else:
+                        logger.warning(f"ffmpeg conversion to wav failed: {res.stderr}")
+                except Exception as e:
+                    logger.warning(f"ffmpeg execution failed: {e}")
+            # Fallback: just return the mp3 if conversion fails
+            return mp3_path
+        else:
+            # Ensure directory exists then copy MP3
+            try:
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                with open(mp3_path, 'rb') as src, open(output_path, 'wb') as dst:
+                    dst.write(src.read())
+                return output_path
+            except Exception:
+                return mp3_path
     
     def get_available_voices(self, provider: str = "all") -> Dict[str, Any]:
         """Get list of available voices"""

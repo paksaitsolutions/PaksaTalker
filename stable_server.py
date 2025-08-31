@@ -14,8 +14,50 @@ from fastapi import FastAPI, HTTPException, File, UploadFile, Form, BackgroundTa
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from api.capabilities_endpoints import router as capabilities_router
+from fastapi.responses import JSONResponse
+from fastapi import Request
 import uvicorn
+import cv2
+import numpy as np
+
+# Add project root to Python path
+project_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, project_root)
+
+try:
+    from api.capabilities_endpoints import router as capabilities_router
+    from api.expressions_endpoints import router as expressions_router
+    from api.emage_endpoints import router as emage_router
+    from api.diagnostics_endpoints import router as diagnostics_router
+    API_ROUTER_AVAILABLE = True
+except Exception as e:
+    API_ROUTER_AVAILABLE = False
+    # Log the actual reason once, in a concise line (logger may not be defined yet)
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "API router disabled: %s. Using fallback endpoints.", str(e)
+    )
+
+# Emotion Recognition (optional; avoid heavy deps/downloads at startup)
+try:
+    from models.emotion.fer_model import EmotionRecognizer
+    # Initialize a lightweight stub by default; real weights can be wired later
+    EMOTION_MODEL = EmotionRecognizer(weights_path=None)
+except Exception as e:
+    print(f"⚠️  Emotion recognition not initialized: {str(e)}")
+    EMOTION_MODEL = None
+
+# OpenSeeFace imports
+try:
+    from OpenSeeFace.facetracker import FaceTracker
+    from OpenSeeFace.tracker import Tracker
+    OPENSEEFACE_AVAILABLE = True
+except ImportError:
+    OPENSEEFACE_AVAILABLE = False
+    print("Warning: OpenSeeFace not available. Face tracking features will be disabled.")
+
+# 3DDFA_V2 imports removed here (not needed in stable_server core path)
+THREE_DDFA_AVAILABLE = False
 
 # Performance tuning envs
 FFMPEG_THREADS = int(os.environ.get('PAKSA_FFMPEG_THREADS', '0'))  # 0 = ffmpeg auto
@@ -142,8 +184,425 @@ DOCS_DIR = BASE_DIR / "docs"
 if DOCS_DIR.exists():
     app.mount("/docs", StaticFiles(directory=DOCS_DIR), name="docs")
 
-# Capabilities endpoint (so frontend can detect available models/features)
-app.include_router(capabilities_router, prefix="/api/v1")
+# Capabilities/Expressions endpoints
+if API_ROUTER_AVAILABLE:
+    app.include_router(capabilities_router, prefix="/api/v1")
+    app.include_router(expressions_router, prefix="/api/v1")
+    app.include_router(emage_router, prefix="/api/v1")
+    app.include_router(diagnostics_router, prefix="/api/v1")
+
+# Expressions endpoints (local fallback to ensure availability)
+@app.get("/api/v1/expressions/capabilities")
+async def expressions_caps_fallback():
+    try:
+        from models.expression.engine import detect_capabilities
+        from pathlib import Path
+        expr = detect_capabilities()
+        # Also include coarse model flags similar to /capabilities
+        sadtalker_ok = False
+        try:
+            import importlib
+            importlib.import_module('models.sadtalker_full')
+            sadtalker_ok = True
+        except Exception:
+            sadtalker_ok = False
+        ck = Path('models') / 'sadtalker' / 'checkpoints'
+        sadtalker_weights = any((ck/f).exists() for f in ['epoch_20.pth','facevid2vid_00189-model.pth.tar','mapping_00109-model.pth.tar'])
+        wav2lip2_ok = (Path('wav2lip2-aoti')/ 'checkpoints' / 'wav2lip2_fp8.pt').exists()
+        emage_repo = Path('EMAGE').exists()
+        return {"success": True, "engines": expr, "models": {
+            "sadtalker": sadtalker_ok,
+            "sadtalker_weights": sadtalker_weights,
+            "wav2lip2": wav2lip2_ok,
+            "emage": emage_repo
+        }}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+# Capabilities fallback
+@app.get("/api/v1/capabilities")
+async def capabilities_fallback():
+    try:
+        from models.expression.engine import detect_capabilities
+        from pathlib import Path
+        expr = detect_capabilities()
+        sadtalker_ok = False
+        try:
+            import importlib
+            importlib.import_module('models.sadtalker_full')
+            sadtalker_ok = True
+        except Exception:
+            sadtalker_ok = False
+        ck = Path('models') / 'sadtalker' / 'checkpoints'
+        sadtalker_weights = any((ck/f).exists() for f in ['epoch_20.pth','facevid2vid_00189-model.pth.tar','mapping_00109-model.pth.tar'])
+        wav2lip2_ok = (Path('wav2lip2-aoti')/ 'checkpoints' / 'wav2lip2_fp8.pt').exists()
+        emage_repo = Path('EMAGE').exists()
+        data = {
+            "models": {
+                "sadtalker": sadtalker_ok,
+                "sadtalker_weights": sadtalker_weights,
+                "wav2lip2": wav2lip2_ok,
+                "emage": emage_repo,
+                "qwen": False,  # not checked here
+                "mediapipe": expr.get('mediapipe', False),
+                "threeddfa": expr.get('threeddfa', False),
+                "openseeface": expr.get('openseeface', False),
+                "mini_xception": expr.get('mini_xception', False)
+            }
+        }
+        return {"success": True, "data": data}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+@app.post("/api/v1/expressions/estimate")
+async def expressions_estimate_fallback(request: Request):
+    try:
+        from models.expression.engine import estimate_from_path
+        form = await request.form()
+        engine = form.get('engine') or 'auto'
+        up = form.get('image')
+        if up is None:
+            return JSONResponse({"success": False, "detail": "image file is required"}, status_code=400)
+        # Save temp
+        import tempfile
+        import shutil
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tf:
+            shutil.copyfileobj(up.file, tf)
+            img_path = tf.name
+        res = estimate_from_path(img_path, engine)
+        return {"success": True, "engine": res.engine, "result": res.to_dict()}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+# POST alias for fusion-video to support Fusion mode unconditionally
+@app.post("/api/v1/generate/fusion-video", include_in_schema=False)
+async def fusion_video_alias(request: Request):
+    try:
+        from fastapi import UploadFile
+        import uuid as _uuid
+        form = await request.form()
+
+        # Parse params
+        image: UploadFile = form.get('image') if 'image' in form else None  # type: ignore
+        audio: UploadFile = form.get('audio') if 'audio' in form else None  # type: ignore
+        text = form.get('prompt') or form.get('text')
+        resolution = form.get('resolution') or '720p'
+        fps_val = form.get('fps')
+        try:
+            fps = int(fps_val) if fps_val else 25
+        except Exception:
+            fps = 25
+        emotion = form.get('emotion') or 'neutral'
+        style = form.get('style') or 'natural'
+        preferWav2Lip2 = form.get('preferWav2Lip2') in ('true', '1', 'yes', True)
+
+        # Save inputs
+        tmp = TEMP_DIR
+        tmp.mkdir(exist_ok=True)
+        img_path = None
+        if image is not None:
+            img_path = tmp / f"{_uuid.uuid4()}_{image.filename or 'image' }"
+            with open(img_path, 'wb') as f:
+                f.write(await image.read())
+        # Audio or TTS
+        audio_path = None
+        if audio is not None:
+            audio_path = tmp / f"{_uuid.uuid4()}_{audio.filename or 'audio' }"
+            with open(audio_path, 'wb') as f:
+                f.write(await audio.read())
+        elif text:
+            # Force gTTS to avoid google cloud/protobuf deps
+            try:
+                from gtts import gTTS
+                mp3_path = tmp / f"{_uuid.uuid4()}.mp3"
+                wav_path = tmp / f"{_uuid.uuid4()}.wav"
+                tts = gTTS(text)
+                tts.save(str(mp3_path))
+                # Convert to wav for downstream
+                import subprocess
+                subprocess.run(['ffmpeg','-y','-i',str(mp3_path),'-ar','16000','-ac','1',str(wav_path)], capture_output=True)
+                audio_path = wav_path if wav_path.exists() else mp3_path
+            except Exception as e:
+                return JSONResponse({"success": False, "detail": f"TTS failed: {e}"}, status_code=500)
+        else:
+            return JSONResponse({"success": False, "detail": "Either audio or text is required"}, status_code=400)
+
+        # Default avatar if missing
+        if img_path is None:
+            img_path = tmp / f"{_uuid.uuid4()}_default.jpg"
+            try:
+                import numpy as _np, cv2 as _cv2
+                canvas = _np.ones((512,512,3), dtype=_np.uint8) * 235
+                _cv2.circle(canvas, (256,256), 180, (210,210,210), -1)
+                _cv2.circle(canvas, (210,210), 28, (70,70,70), -1)
+                _cv2.circle(canvas, (302,210), 28, (70,70,70), -1)
+                _cv2.ellipse(canvas, (256,320), (70,35), 0, 0, 180, (70,70,70), 5)
+                _cv2.imwrite(str(img_path), canvas)
+            except Exception:
+                with open(img_path, 'wb') as f:
+                    f.write(b'avatar')
+
+        # Create task
+        task_id = str(_uuid.uuid4())
+        tasks[task_id] = {"status": "processing", "progress": 5, "stage": "Queued"}
+
+        # Kick background generation
+        import asyncio as _asyncio
+        async def _run():
+            try:
+                tasks[task_id].update({"progress": 15, "stage": "Starting fusion"})
+                from models.fusion.engine import FusionEngine
+                eng = FusionEngine()
+                out_path = OUTPUT_DIR / f"{task_id}.mp4"
+                final = eng.generate(
+                    face_image=str(img_path),
+                    audio_path=str(audio_path),
+                    output_path=str(out_path),
+                    emotion=emotion,
+                    style=style,
+                    fps=fps,
+                    resolution=resolution,
+                    prefer_wav2lip2=preferWav2Lip2
+                )
+                tasks[task_id] = {"status": "completed", "progress": 100, "stage": "Done", "video_url": f"/api/download/{out_path.name}"}
+            except Exception as e:
+                tasks[task_id] = {"status": "failed", "progress": 0, "stage": "Failed", "error": str(e)}
+
+        _asyncio.create_task(_run())
+        return {"success": True, "task_id": task_id, "status": "processing"}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+# Diagnostics fallbacks (always available)
+@app.get("/api/v1/diagnostics/versions")
+async def diagnostics_versions_fallback():
+    versions = {}
+    def _put(name, mod, attr='__version__'):
+        try:
+            m = __import__(mod, fromlist=['*'])
+            versions[name] = getattr(m, attr, 'unknown')
+        except Exception as e:
+            versions[name] = f"not_installed ({e})"
+    _put('python', 'sys', 'version')
+    _put('protobuf', 'google.protobuf')
+    _put('mediapipe', 'mediapipe')
+    _put('onnxruntime', 'onnxruntime')
+    _put('opencv', 'cv2')
+    _put('tensorflow', 'tensorflow')
+    _put('torch', 'torch')
+    return {"success": True, "versions": versions}
+
+@app.get("/api/v1/diagnostics/models")
+async def diagnostics_models_fallback():
+    from pathlib import Path
+    import os
+    status = {}
+    try:
+        p = os.getenv('SADTALKER_WEIGHTS')
+        ok = False
+        if p and Path(p).exists():
+            ok = True
+        else:
+            ck = Path('models') / 'sadtalker' / 'checkpoints'
+            for c in [ck/ 'epoch_20.pth', ck/'facevid2vid_00189-model.pth.tar', ck/'mapping_00109-model.pth.tar']:
+                if c.exists():
+                    ok = True
+                    break
+        status['sadtalker_weights'] = ok
+    except Exception as e:
+        status['sadtalker_weights'] = f"error ({e})"
+
+    try:
+        status['wav2lip2'] = (Path('wav2lip2-aoti')/ 'checkpoints' / 'wav2lip2_fp8.pt').exists()
+    except Exception as e:
+        status['wav2lip2'] = f"error ({e})"
+
+    try:
+        repo = Path('EMAGE')
+        status['emage_repo'] = repo.exists()
+        status['emage_weights'] = (repo / 'checkpoints' / 'emage_best.pth').exists()
+    except Exception as e:
+        status['emage'] = f"error ({e})"
+
+    return {"success": True, "models": status}
+
+# EMAGE status fallback (always available)
+@app.get("/api/v1/emage/status")
+async def emage_status_fallback():
+    try:
+        from pathlib import Path
+        repo = Path('EMAGE')
+        available = repo.exists()
+        details = {"present": available}
+        if available:
+            models_dir = repo / 'models'
+            checkpoints_dir = repo / 'checkpoints'
+            details.update({
+                "models_dir": str(models_dir),
+                "checkpoints_dir": str(checkpoints_dir),
+                "gesture_decoder": (models_dir / 'gesture_decoder.py').exists() or (models_dir / 'gesture_decoder' / '__init__.py').exists(),
+                "weights_present": (checkpoints_dir / 'emage_best.pth').exists()
+            })
+        return {"success": True, "emage": details}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+# Lightweight style presets list to satisfy frontend when using stable_server
+try:
+    # Reuse presets from full API if available
+    from api.routes import style_presets as _style_presets  # type: ignore
+except Exception:
+    from datetime import datetime, timezone
+    _now_iso = datetime.now(timezone.utc).isoformat()
+    _style_presets = {
+        "professional": {
+            "preset_id": "professional",
+            "name": "Professional",
+            "description": "Balanced professional on-camera style",
+            "intensity": 0.6,
+            "smoothness": 0.85,
+            "expressiveness": 0.6,
+            "cultural_context": "GLOBAL",
+            "formality": 0.7,
+            "gesture_frequency": 0.5,
+            "gesture_amplitude": 0.8,
+            "created_at": _now_iso,
+            "updated_at": _now_iso,
+        },
+        "casual": {
+            "preset_id": "casual",
+            "name": "Casual",
+            "description": "Relaxed conversational style",
+            "intensity": 0.7,
+            "smoothness": 0.7,
+            "expressiveness": 0.8,
+            "cultural_context": "GLOBAL",
+            "formality": 0.3,
+            "gesture_frequency": 0.8,
+            "gesture_amplitude": 1.2,
+            "created_at": _now_iso,
+            "updated_at": _now_iso,
+        },
+        "enthusiastic": {
+            "preset_id": "enthusiastic",
+            "name": "Enthusiastic",
+            "description": "High-energy presentation style",
+            "intensity": 0.9,
+            "smoothness": 0.6,
+            "expressiveness": 0.9,
+            "cultural_context": "GLOBAL",
+            "formality": 0.5,
+            "gesture_frequency": 0.9,
+            "gesture_amplitude": 1.5,
+            "created_at": _now_iso,
+            "updated_at": _now_iso,
+        },
+    }
+
+
+@app.get("/api/v1/style-presets")
+async def list_style_presets_v1():
+    """List style presets for stable server compatibility."""
+    try:
+        presets = list(_style_presets.values())
+        return {"success": True, "presets": presets, "count": len(presets)}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+@app.post("/api/v1/style-presets")
+async def create_style_preset_v1(
+    name: str = Form(...),
+    description: str = Form(""),
+    intensity: float = Form(0.7),
+    smoothness: float = Form(0.8),
+    expressiveness: float = Form(0.7),
+    cultural_context: str = Form("GLOBAL"),
+    formality: float = Form(0.5),
+    gesture_frequency: float = Form(0.7),
+    gesture_amplitude: float = Form(1.0)
+):
+    try:
+        import uuid
+        from datetime import datetime, timezone
+        pid = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        preset = {
+            "preset_id": pid,
+            "name": name,
+            "description": description,
+            "intensity": float(intensity),
+            "smoothness": float(smoothness),
+            "expressiveness": float(expressiveness),
+            "cultural_context": cultural_context,
+            "formality": float(formality),
+            "gesture_frequency": float(gesture_frequency),
+            "gesture_amplitude": float(gesture_amplitude),
+            "created_at": now,
+            "updated_at": now
+        }
+        _style_presets[preset["preset_id"]] = preset
+        return {"success": True, "preset": preset}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+@app.post("/api/v1/style-presets/interpolate")
+async def interpolate_style_presets_v1(
+    preset1_id: str = Form(...),
+    preset2_id: str = Form(...),
+    ratio: float = Form(0.5)
+):
+    try:
+        if preset1_id not in _style_presets or preset2_id not in _style_presets:
+            return JSONResponse({"success": False, "detail": "Preset not found"}, status_code=404)
+        import uuid
+        from datetime import datetime, timezone
+        p1 = _style_presets[preset1_id]
+        p2 = _style_presets[preset2_id]
+        now = datetime.now(timezone.utc).isoformat()
+        interp = {
+            "preset_id": str(uuid.uuid4()),
+            "name": f"{p1['name']} + {p2['name']} ({ratio:.1f})",
+            "description": f"Interpolated between {p1['name']} and {p2['name']}",
+            "intensity": p1["intensity"] * (1 - ratio) + p2["intensity"] * ratio,
+            "smoothness": p1["smoothness"] * (1 - ratio) + p2["smoothness"] * ratio,
+            "expressiveness": p1["expressiveness"] * (1 - ratio) + p2["expressiveness"] * ratio,
+            "cultural_context": p1["cultural_context"] if ratio < 0.5 else p2["cultural_context"],
+            "formality": p1["formality"] * (1 - ratio) + p2["formality"] * ratio,
+            "gesture_frequency": p1["gesture_frequency"] * (1 - ratio) + p2["gesture_frequency"] * ratio,
+            "gesture_amplitude": p1["gesture_amplitude"] * (1 - ratio) + p2["gesture_amplitude"] * ratio,
+            "created_at": now,
+            "updated_at": now
+        }
+        return {"success": True, "interpolated_preset": interp}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+@app.post("/api/v1/style-presets/{preset_id}/cultural-variants")
+async def create_cultural_variants_v1(preset_id: str):
+    try:
+        if preset_id not in _style_presets:
+            return JSONResponse({"success": False, "detail": "Preset not found"}, status_code=404)
+        base = _style_presets[preset_id]
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        contexts = ["WESTERN", "EAST_ASIAN", "MIDDLE_EASTERN", "SOUTH_ASIAN", "LATIN_AMERICAN", "AFRICAN"]
+        variants = []
+        for ctx in contexts:
+            if ctx == base["cultural_context"]:
+                continue
+            import uuid
+            v = dict(base)
+            v.update({
+                "preset_id": str(uuid.uuid4()),
+                "name": f"{base['name']} ({ctx})",
+                "cultural_context": ctx,
+                "created_at": now,
+                "updated_at": now
+            })
+            variants.append(v)
+        return {"success": True, "variants": variants, "count": len(variants)}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
 
 def process_video_sync(
     task_id: str,
@@ -680,7 +1139,8 @@ async def generate_video(
     voiceModel: str = Form("en-US-JennyNeural"),
     background: str = Form("blur"),
     enhanceFace: bool = Form(True),
-    stabilization: bool = Form(True)
+    stabilization: bool = Form(True),
+    expressionEngine: str = Form('auto')
 ):
     """Real video generation from uploaded files"""
     
@@ -722,7 +1182,8 @@ async def generate_video(
             "voice_model": voiceModel,
             "background": background,
             "enhance_face": enhanceFace,
-            "stabilization": stabilization
+            "stabilization": stabilization,
+            "expression_engine": expressionEngine
         }
         
         # Start processing outside response lifecycle to avoid CancelledError
@@ -754,7 +1215,8 @@ async def generate_video_from_prompt(
     voice: str = Form("en-US-JennyNeural"),
     resolution: str = Form("720p"),
     fps: int = Form(30),
-    gestureLevel: str = Form("medium")
+    gestureLevel: str = Form("medium"),
+    expressionEngine: str = Form('auto')
 ):
     """Video generation from text prompt"""
     
@@ -801,7 +1263,8 @@ async def generate_video_from_prompt(
             "resolution": resolution,
             "fps": fps,
             "voice_model": voice,
-            "gesture_level": gestureLevel
+            "gesture_level": gestureLevel,
+            "expression_engine": expressionEngine
         }
         
         # Start processing outside response lifecycle to avoid CancelledError
@@ -1021,12 +1484,33 @@ if __name__ == "__main__":
         logger.info("Starting stable PaksaTalker server...")
         logger.info("Server includes real AI processing capabilities")
         logger.info("Server will be available at: http://localhost:8000")
-        
+        # Minimal logging config to avoid uvicorn DefaultFormatter (which expects isatty)
+        SIMPLE_LOG_CONFIG = {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "simple": {"format": "%(asctime)s - %(levelname)s - %(name)s - %(message)s"}
+            },
+            "handlers": {
+                "console": {
+                    "class": "logging.StreamHandler",
+                    "formatter": "simple",
+                    "stream": "ext://sys.stdout"
+                }
+            },
+            "loggers": {
+                "uvicorn": {"handlers": ["console"], "level": "INFO"},
+                "uvicorn.error": {"handlers": ["console"], "level": "INFO", "propagate": False},
+                "uvicorn.access": {"handlers": ["console"], "level": "INFO", "propagate": False}
+            }
+        }
+
         uvicorn.run(
             app,
             host="0.0.0.0",
             port=8000,
-            log_level="info"
+            log_level="info",
+            log_config=SIMPLE_LOG_CONFIG
         )
     except KeyboardInterrupt:
         logger.info("Server stopped by user")

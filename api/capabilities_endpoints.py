@@ -17,6 +17,11 @@ class CapabilityModels(BaseModel):
     wav2lip2: bool = Field(False)
     emage: bool = Field(False)
     qwen: bool = Field(False)
+    mediapipe: bool = Field(False)
+    threeddfa: bool = Field(False)
+    openseeface: bool = Field(False)
+    mini_xception: bool = Field(False)
+    sadtalker_weights: bool = Field(False)
 
 
 class CapabilityFFmpeg(BaseModel):
@@ -31,8 +36,15 @@ class CapabilitiesResponse(BaseModel):
 
 def _emage_available() -> bool:
     try:
-        importlib.import_module('EMAGE.models.gesture_decoder')
-        return True
+        # Prefer local repo check to avoid ImportError noise
+        repo = Path('EMAGE')
+        if not repo.exists():
+            return False
+        models_dir = repo / 'models'
+        checkpoints_dir = repo / 'checkpoints'
+        has_code = (models_dir / 'gesture_decoder.py').exists() or (models_dir / 'gesture_decoder/__init__.py').exists()
+        has_ckpt = (checkpoints_dir / 'emage_best.pth').exists()
+        return has_code and has_ckpt
     except Exception:
         return False
 
@@ -50,6 +62,24 @@ def _sadtalker_available() -> bool:
     try:
         importlib.import_module('models.sadtalker_full')
         return True
+    except Exception:
+        return False
+
+
+def _sadtalker_weights_available() -> bool:
+    try:
+        import os
+        from os import getenv
+        p = getenv('SADTALKER_WEIGHTS')
+        if p and Path(p).exists():
+            return True
+        ck = Path('models') / 'sadtalker' / 'checkpoints'
+        candidates = [
+            ck / 'epoch_20.pth',
+            ck / 'facevid2vid_00189-model.pth.tar',
+            ck / 'mapping_00109-model.pth.tar'
+        ]
+        return any(c.exists() for c in candidates)
     except Exception:
         return False
 
@@ -80,11 +110,18 @@ def _ffmpeg_filters() -> CapabilityFFmpeg:
 
 @router.get("")
 async def get_capabilities() -> CapabilitiesResponse:
+    from models.expression.engine import detect_capabilities
+    expr_caps = detect_capabilities()
     models = CapabilityModels(
         sadtalker=_sadtalker_available(),
         wav2lip2=_wav2lip2_available(),
         emage=_emage_available(),
         qwen=_qwen_available(),
+        mediapipe=expr_caps.get('mediapipe', False),
+        threeddfa=expr_caps.get('threeddfa', False),
+        openseeface=expr_caps.get('openseeface', False),
+        mini_xception=expr_caps.get('mini_xception', False),
+        sadtalker_weights=_sadtalker_weights_available(),
     )
     ffmpeg = _ffmpeg_filters()
     data = {
@@ -92,4 +129,3 @@ async def get_capabilities() -> CapabilitiesResponse:
         'ffmpeg': ffmpeg.dict(),
     }
     return CapabilitiesResponse(success=True, data=data)
-

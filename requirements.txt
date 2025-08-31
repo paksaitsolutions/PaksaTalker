@@ -20,6 +20,7 @@ ninja>=1.10.2.3
 librosa>=0.8.1
 soundfile>=0.10.0
 pydub>=0.25.1
+gTTS>=2.5.1
 
 # Video Processing
 ffmpeg-python>=0.2.0

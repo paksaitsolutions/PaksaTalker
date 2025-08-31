@@ -653,7 +653,8 @@ async def generate_video(
     voiceModel: Optional[str] = Form("en-US-JennyNeural"),
     background: Optional[str] = Form("blur"),
     enhanceFace: Optional[bool] = Form(True),
-    stabilization: Optional[bool] = Form(True)
+    stabilization: Optional[bool] = Form(True),
+    expressionEngine: Optional[str] = Form(None)
 ):
     """Generate a video from uploaded image and audio/text."""
     try:
@@ -702,7 +703,8 @@ async def generate_video(
             resolution=resolution,
             fps=fps,
             enhance_face=bool(enhanceFace),
-            stabilization=bool(stabilization)
+            stabilization=bool(stabilization),
+            expression_engine=expressionEngine or 'auto'
         )
         
         return {
@@ -862,7 +864,8 @@ async def process_video_generation_direct(
     resolution: str = "720p",
     fps: int = 25,
     enhance_face: bool = True,
-    stabilization: bool = True
+    stabilization: bool = True,
+    expression_engine: str = 'auto'
 ):
     """Generate a video using SadTalker directly (moving frames), fallback to ffmpeg still image."""
     import logging
@@ -881,16 +884,34 @@ async def process_video_generation_direct(
     try:
         set_status(10, "AI models initialized")
 
+        # Optional: estimate expressions to guide pipeline
+        try:
+            from models.expression.engine import estimate_from_path
+            expr = estimate_from_path(image_path, expression_engine)
+            task_status[task_id]["expression_engine"] = expr.engine
+        except Exception:
+            pass
+
+        emage_success = False
         # Try SadTalker full pipeline
         try:
             from models.sadtalker_full import SadTalkerFull
             set_status(30, "Avatar image preprocessed")
             sadtalker = SadTalkerFull()
+            # Derive emotion hint from expression engine if available
+            emotion_hint = 'neutral'
+            try:
+                from models.expression.engine import estimate_from_path
+                expr = estimate_from_path(image_path, expression_engine)
+                if getattr(expr, 'emotion_probs', None):
+                    emotion_hint = max(expr.emotion_probs.items(), key=lambda kv: kv[1])[0]
+            except Exception:
+                pass
             face_video = sadtalker.generate(
                 image_path=image_path,
                 audio_path=audio_path or image_path,  # if no audio, dummy path won't be used for frames
                 output_path=str(Path(config.get('paths.temp', 'temp')) / f"{task_id}_face.mp4"),
-                emotion="neutral",
+                emotion=emotion_hint,
                 enhance_face=enhance_face
             )
 
@@ -900,7 +921,30 @@ async def process_video_generation_direct(
 
             set_status(95, "Post-processing applied")
         except Exception as e:
-            logger.warning(f"SadTalker generation failed, falling back to ffmpeg still image: {e}")
+            logger.warning(f"SadTalker generation failed: {e}")
+            # Try EMAGE full-body fallback if available and audio is present
+            try:
+                from api.capabilities_endpoints import _emage_available  # type: ignore
+                if _emage_available() and audio_path:
+                    set_status(70, "Generating full-body gestures (EMAGE)")
+                    from models.emage_realistic import get_emage_model
+                    emage = get_emage_model()
+                    emage_video = emage.generate_full_video(
+                        audio_path=audio_path,
+                        output_path=output_path,
+                        emotion='neutral',
+                        style='natural',
+                        avatar_type='realistic'
+                    )
+                    # If EMAGE succeeded, mark progress and skip ffmpeg still image
+                    if emage_video and os.path.exists(emage_video):
+                        emage_success = True
+            except Exception as ee:
+                logger.warning(f"EMAGE fallback failed: {ee}; using ffmpeg still image")
+            if not emage_success:
+                # Fallback: still image with audio using ffmpeg
+                import subprocess
+                set_status(70, "Video frames rendered")
             # Fallback: still image with audio using ffmpeg
             import subprocess
             set_status(70, "Video frames rendered")
@@ -1044,6 +1088,144 @@ async def list_adaptation_tasks():
         {"task_id": task_id, **task_info}
         for task_id, task_info in adaptation_tasks.items()
     ]
+
+# -------------------- FUSION GENERATION (SadTalker face + EMAGE body) --------------------
+@router.post("/generate/fusion-video")
+async def generate_fusion_video(
+    background_tasks: BackgroundTasks,
+    image: UploadFile = File(None),
+    audio: Optional[UploadFile] = File(None),
+    text: Optional[str] = Form(None),
+    resolution: Optional[str] = Form("720p"),
+    fps: Optional[int] = Form(25),
+    emotion: Optional[str] = Form("neutral"),
+    style: Optional[str] = Form("natural"),
+    preferWav2Lip2: Optional[bool] = Form(False)
+):
+    try:
+        # Save uploads
+        temp_dir = Path(config.get('paths.temp', 'temp'))
+        temp_dir.mkdir(exist_ok=True)
+
+        img_path: Optional[Path] = None
+        if image is not None:
+            img_path = temp_dir / f"{uuid.uuid4()}_{image.filename or 'image' }"
+            with open(img_path, 'wb') as f:
+                f.write(await image.read())
+
+        # Prepare audio path: uploaded or synthesize from text
+        audio_path: Optional[Path] = None
+        if audio is not None:
+            audio_path = temp_dir / f"{uuid.uuid4()}_{audio.filename or 'audio' }"
+            with open(audio_path, 'wb') as f:
+                f.write(await audio.read())
+        elif text:
+            # Use TTS to generate audio
+            from api.tts_service import get_tts_service
+            tts = get_tts_service()
+            audio_path = Path(temp_dir / f"{uuid.uuid4()}.wav")
+            # Prefer free gTTS to avoid protobuf/google deps
+            try:
+                provider_choice = 'gtts' if 'gtts' in getattr(tts, 'providers', {}) else 'auto'
+            except Exception:
+                provider_choice = 'auto'
+            tts.generate_speech(text=text, voice="en-US-JennyNeural", output_path=str(audio_path), provider=provider_choice)
+        else:
+            raise HTTPException(status_code=400, detail="Either audio or text must be provided for fusion video")
+
+        # Default avatar image if none provided
+        if img_path is None:
+            img_path = temp_dir / f"{uuid.uuid4()}_default.jpg"
+            try:
+                import cv2
+                import numpy as np
+                canvas = np.ones((512,512,3), dtype=np.uint8) * 235
+                cv2.circle(canvas, (256,256), 180, (210,210,210), -1)
+                cv2.circle(canvas, (210,210), 28, (70,70,70), -1)
+                cv2.circle(canvas, (302,210), 28, (70,70,70), -1)
+                cv2.ellipse(canvas, (256,320), (70,35), 0, 0, 180, (70,70,70), 5)
+                cv2.imwrite(str(img_path), canvas)
+            except Exception:
+                with open(img_path, 'wb') as f:
+                    f.write(b"avatar")
+
+        # Prepare output
+        output_dir = Path(config.get('paths.output', 'output'))
+        output_dir.mkdir(exist_ok=True)
+        task_id = str(uuid.uuid4())
+        output_path = output_dir / f"{task_id}.mp4"
+
+        # Background task
+        background_tasks.add_task(
+            process_fusion_generation,
+            task_id=task_id,
+            image_path=str(img_path),
+            audio_path=str(audio_path),
+            output_path=str(output_path),
+            emotion=emotion or 'neutral',
+            style=style or 'natural',
+            fps=int(fps or 25),
+            resolution=resolution or '720p',
+            prefer_wav2lip2=bool(preferWav2Lip2)
+        )
+
+        return {"success": True, "task_id": task_id, "status": "processing"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def process_fusion_generation(
+    task_id: str,
+    image_path: str,
+    audio_path: str,
+    output_path: str,
+    emotion: str = 'neutral',
+    style: str = 'natural',
+    fps: int = 25,
+    resolution: str = '720p',
+    prefer_wav2lip2: bool = False
+):
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        # Update status
+        task_status[task_id] = {
+            "status": "processing",
+            "progress": 10,
+            "stage": "Initializing fusion engine"
+        }
+        # Run fusion
+        from models.fusion.engine import FusionEngine
+        eng = FusionEngine()
+        task_status[task_id].update({"progress": 40, "stage": "Generating body and head tracks"})
+        final_path = eng.generate(
+            face_image=image_path,
+            audio_path=audio_path,
+            output_path=output_path,
+            emotion=emotion,
+            style=style,
+            fps=fps,
+            resolution=resolution,
+            prefer_wav2lip2=prefer_wav2lip2
+        )
+        # Finalize
+        if not os.path.exists(final_path):
+            raise RuntimeError("Fusion output not created")
+        task_status[task_id] = {
+            "status": "completed",
+            "progress": 100,
+            "stage": "Fusion video completed",
+            "result_path": final_path,
+            "completed_at": datetime.now(timezone.utc).isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Fusion generation failed: {e}")
+        task_status[task_id] = {
+            "status": "failed",
+            "progress": 0,
+            "stage": "Fusion generation failed",
+            "error": str(e)
+        }
 
 @router.get("/speakers/{speaker_id}", response_model=SpeakerInfo)
 async def get_speaker(
@@ -1217,13 +1399,10 @@ async def text_to_speech(
         
         tts_service = get_tts_service()
         
-        # Generate audio file path
+        # Generate audio file path (use .wav as preferred target)
         output_dir = config.get('paths.output', 'output')
         os.makedirs(output_dir, exist_ok=True)
-        audio_path = os.path.join(
-            output_dir,
-            f"{uuid.uuid4()}.wav"
-        )
+        audio_path = os.path.join(output_dir, f"{uuid.uuid4()}.wav")
         
         # Generate speech using real TTS
         result_path = tts_service.generate_speech(
@@ -1233,11 +1412,10 @@ async def text_to_speech(
             provider=provider
         )
         
-        return FileResponse(
-            result_path,
-            media_type="audio/wav",
-            filename=os.path.basename(result_path)
-        )
+        # Serve correct MIME type based on extension
+        ext = os.path.splitext(result_path)[1].lower()
+        mime = "audio/wav" if ext == ".wav" else "audio/mpeg" if ext == ".mp3" else "application/octet-stream"
+        return FileResponse(result_path, media_type=mime, filename=os.path.basename(result_path))
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1267,7 +1445,8 @@ async def generate_video_from_prompt(
     voice: Optional[str] = Form("en-US-JennyNeural"),
     resolution: Optional[str] = Form("1080p"),
     fps: Optional[int] = Form(30),
-    gestureLevel: Optional[str] = Form("medium")
+    gestureLevel: Optional[str] = Form("medium"),
+    expressionEngine: Optional[str] = Form(None)
 ):
     """Generate video from text prompt using Qwen + TTS + Default Avatar."""
     try:
@@ -1282,15 +1461,22 @@ async def generate_video_from_prompt(
         if voice and not is_voice_supported(voice):
             voice = get_default_voice("en-US")
             
-        # Generate TTS audio
+        # Generate TTS audio using free provider if available
+        from api.tts_service import get_tts_service
+        tts_service = get_tts_service()
+        # Prefer free 'gtts' provider, fallback to 'auto'
+        try:
+            desired_provider = 'gtts' if 'gtts' in getattr(tts_service, 'providers', {}) else 'auto'
+        except Exception:
+            desired_provider = 'auto'
         audio_path = temp_dir / f"{uuid.uuid4()}.wav"
-        import wave
-        with wave.open(str(audio_path), 'wb') as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(22050)
-            # Create 5 seconds of silence
-            wav_file.writeframes(b'\x00' * 22050 * 2 * 5)
+        # tts_service may return mp3 if ffmpeg missing; handle later in ffmpeg pipeline
+        tts_result_path = tts_service.generate_speech(
+            text=generated_text,
+            voice=voice or "en-US-JennyNeural",
+            output_path=str(audio_path),
+            provider=desired_provider
+        )
         
         # Create a default avatar image
         image_path = temp_dir / f"{uuid.uuid4()}.jpg"
@@ -1312,9 +1498,10 @@ async def generate_video_from_prompt(
             process_video_generation,
             task_id=task_id,
             image_path=str(image_path),
-            audio_path=str(audio_path),
+            audio_path=str(tts_result_path),
             output_path=str(output_path),
-            resolution=resolution
+            resolution=resolution,
+            expression_engine=expressionEngine or 'auto'
         )
         
         return {

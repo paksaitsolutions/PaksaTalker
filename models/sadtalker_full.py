@@ -108,7 +108,7 @@ class FaceLandmarkDetector:
     
     def __init__(self):
         try:
-            import mediapipe as mp
+            import mediapipe as mp  # type: ignore
             self.mp_face_mesh = mp.solutions.face_mesh
             self.face_mesh = self.mp_face_mesh.FaceMesh(
                 static_image_mode=False,
@@ -117,7 +117,8 @@ class FaceLandmarkDetector:
                 min_detection_confidence=0.5
             )
             self.available = True
-        except ImportError:
+        except Exception:
+            # Any import/runtime error (e.g., protobuf mismatch) disables mediapipe path
             self.available = False
     
     def detect_landmarks(self, image):
@@ -172,10 +173,31 @@ class SadTalkerFull(BaseModel):
             self.audio2pose = Audio2PoseNet(self.audio_dim, self.pose_dim).to(self.device)
             self.face_renderer = FaceRenderer(self.img_size).to(self.device)
             
+            # Resolve default weights
+            if not model_path:
+                # Prefer explicit env var
+                model_path = os.environ.get('SADTALKER_WEIGHTS')
+                # Fallback common checkpoints
+                if not model_path:
+                    ck_dir = Path('models') / 'sadtalker' / 'checkpoints'
+                    # Try a consolidated epoch file if present
+                    for candidate in [
+                        ck_dir / 'epoch_20.pth',
+                        ck_dir / 'facevid2vid_00189-model.pth.tar',
+                        ck_dir / 'mapping_00109-model.pth.tar'
+                    ]:
+                        if candidate.exists():
+                            model_path = str(candidate)
+                            break
+            
             # Load pretrained weights if available
             if model_path and os.path.exists(model_path):
-                self._load_pretrained_weights(model_path)
-                self.has_pretrained = True
+                try:
+                    self._load_pretrained_weights(model_path)
+                    self.has_pretrained = True
+                except Exception:
+                    self._initialize_weights()
+                    self.has_pretrained = False
             else:
                 # Initialize with random weights (placeholder only)
                 self._initialize_weights()

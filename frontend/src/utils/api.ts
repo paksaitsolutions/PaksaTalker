@@ -112,6 +112,19 @@ export const generateVideoFromPrompt = async (formData: FormData) => {
   }
 }
 
+export const getExpressionCapabilities = async () => {
+  const res = await fetch(`${API_BASE_URL}/expressions/capabilities`)
+  return handleResponse(res)
+}
+
+export const estimateExpressions = async (image: File, engine: string = 'auto') => {
+  const fd = new FormData()
+  fd.append('image', image)
+  fd.append('engine', engine)
+  const res = await fetch(`${API_BASE_URL}/expressions/estimate`, { method: 'POST', body: fd })
+  return handleResponse(res)
+}
+
 // Style Preset API functions
 export const createStylePreset = async (presetData: any) => {
   const formData = new FormData()

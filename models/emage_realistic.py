@@ -35,46 +35,87 @@ class EMageRealistic:
         try:
             logger.info("Loading EMAGE realistic body expression model...")
             
-            # Clone EMAGE repository
+            # Locate EMAGE repository
             repo_path = Path("EMAGE")
             if not repo_path.exists():
-                subprocess.run([
-                    "git", "clone", 
-                    "https://github.com/PantoMatrix/EMAGE.git"
-                ], check=True)
-            
-            # Install requirements if exists
-            requirements_file = repo_path / "requirements.txt"
-            if requirements_file.exists():
-                try:
-                    subprocess.run([
-                        "pip", "install", "-r", 
-                        str(requirements_file)
-                    ], check=True)
-                except subprocess.CalledProcessError as e:
-                    logger.warning(f"Failed to install EMAGE requirements: {e}")
-            else:
-                logger.info("EMAGE requirements.txt not found, continuing without installation")
-            
-            # Add to Python path
+                # No repo present; raise a clear error
+                raise RuntimeError("EMAGE repository not found at ./EMAGE. Please clone it and provide checkpoints.")
+
+            # Add likely module roots to sys.path
             import sys
-            sys.path.insert(0, str(repo_path))
-            
-            # Import EMAGE modules
+            candidate_roots = [repo_path]
+            for sub in ["Source", "EMAGE", "src"]:
+                p = repo_path / sub
+                if p.exists():
+                    candidate_roots.append(p)
+            for root in candidate_roots:
+                if (root / "models").exists():
+                    sys.path.insert(0, str(root))
+
+            # Auto-discover a models package anywhere under repo if not found yet
+            def _contains_required(files: List[str]) -> bool:
+                names = set(files)
+                return (
+                    ("gesture_decoder.py" in names or "gesture_decoder" in names) and
+                    ("audio_encoder.py" in names) and
+                    ("motion_representation.py" in names)
+                )
             try:
-                from models.motion_representation import MotionRep
-                from models.audio_encoder import AudioEncoder
-                from models.gesture_decoder import GestureDecoder
-                from utils.config import Config
-            except ImportError:
-                # Fallback imports
-                from EMAGE.models.motion_representation import MotionRep
-                from EMAGE.models.audio_encoder import AudioEncoder
-                from EMAGE.models.gesture_decoder import GestureDecoder
-                from EMAGE.utils.config import Config
+                if 'models' not in sys.modules:
+                    for base in [repo_path] + candidate_roots:
+                        for dirpath, dirnames, filenames in os.walk(base):
+                            d = Path(dirpath)
+                            if d.name.lower() == 'models' and _contains_required(filenames):
+                                sys.path.insert(0, str(d.parent))
+                                break
+            except Exception:
+                pass
+
+            # Import EMAGE modules (robustly)
+            MotionRep = None
+            AudioEncoder = None
+            GestureDecoder = None
+            Config = None
+            last_err = None
+            for base in ("models", "EMAGE.models"):
+                try:
+                    _mr = __import__(f"{base}.motion_representation", fromlist=["MotionRep"])  # type: ignore
+                    _ae = __import__(f"{base}.audio_encoder", fromlist=["AudioEncoder"])  # type: ignore
+                    _gd = __import__(f"{base}.gesture_decoder", fromlist=["GestureDecoder"])  # type: ignore
+                    # config may be under utils
+                    try:
+                        _cfg = __import__("utils.config", fromlist=["Config"])  # type: ignore
+                    except Exception:
+                        _cfg = __import__(f"{base}.utils.config", fromlist=["Config"])  # type: ignore
+                    MotionRep = getattr(_mr, "MotionRep", None)
+                    AudioEncoder = getattr(_ae, "AudioEncoder", None)
+                    GestureDecoder = getattr(_gd, "GestureDecoder", None)
+                    Config = getattr(_cfg, "Config", None)
+                    if all([MotionRep, AudioEncoder, GestureDecoder, Config]):
+                        # Log discovered module root for visibility
+                        try:
+                            from pathlib import Path as _Path
+                            module_root = _Path(getattr(_mr, "__file__", str(repo_path))).resolve().parent.parent
+                            logger.debug(f"EMAGE module root: {module_root}")
+                        except Exception:
+                            pass
+                        break
+                except Exception as e:
+                    last_err = e
+                    continue
+            if not all([MotionRep, AudioEncoder, GestureDecoder, Config]):
+                raise RuntimeError(f"Failed to import EMAGE modules. Last error: {last_err}")
             
             # Load configuration
-            config = Config(str(repo_path / "configs" / "emage_config.yaml"))
+            config_path = repo_path / "configs" / "emage_config.yaml"
+            if not config_path.exists():
+                # try alternative common paths
+                for alt in [repo_path / "Config" / "emage_config.yaml", repo_path / "config" / "emage_config.yaml"]:
+                    if alt.exists():
+                        config_path = alt
+                        break
+            logger.debug(f"EMAGE config path: {config_path}")
+            config = Config(str(config_path))
             
             # Initialize model components
             self.audio_encoder = AudioEncoder(

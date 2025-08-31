@@ -539,6 +539,9 @@ from api.camera_endpoints import router as camera_router
 from api.background_endpoints import router as background_router
 from api.postprocess_endpoints import router as post_router
 from api.capabilities_endpoints import router as capabilities_router
+from api.diagnostics_endpoints import router as diagnostics_router
+from api.emage_endpoints import router as emage_router
+from api.expressions_endpoints import router as expressions_router
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(prompt_router, prefix="/api/v1")
 app.include_router(convo_router, prefix="/api/v1")
@@ -550,6 +553,9 @@ app.include_router(camera_router, prefix="/api/v1")
 app.include_router(background_router, prefix="/api/v1")
 app.include_router(post_router, prefix="/api/v1")
 app.include_router(capabilities_router, prefix="/api/v1")
+app.include_router(diagnostics_router, prefix="/api/v1")
+app.include_router(emage_router, prefix="/api/v1")
+app.include_router(expressions_router, prefix="/api/v1")
 app.include_router(websocket_router)
 
 # Serve SPA - catch all other routes and return the frontend
