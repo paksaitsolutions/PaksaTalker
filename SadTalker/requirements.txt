@@ -60,12 +60,12 @@ narwhals==2.1.2
 networkx==3.4.2
 numba==0.60.0
 numpy==1.26.4
-opencv-python==4.11.0.86
+opencv-python==4.12.0.88
 opt_einsum==3.4.0
 orjson==3.11.2
 packaging==25.0
 pandas==2.3.2
-pillow==10.4.0
+pillow==11.3.0
 platformdirs==4.3.8
 pooch==1.8.2
 protobuf==4.25.8
@@ -82,7 +82,7 @@ PyWavelets==1.8.0
 PyYAML==6.0.2
 realesrgan==0.3.0
 referencing==0.36.2
-requests==2.28.1
+requests==2.32.4
 resampy==0.3.1
 rich==14.1.0
 rpds-py==0.27.0
@@ -106,7 +106,7 @@ threadpoolctl==3.6.0
 tifffile==2025.5.10
 tomli==2.2.1
 tomlkit==0.13.3
-torch==1.13.1+cpu
+torch==2.8.0
 torchaudio==0.13.1+cpu
 torchvision==0.14.1+cpu
 tqdm==4.67.1
