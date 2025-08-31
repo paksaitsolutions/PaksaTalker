@@ -200,6 +200,112 @@ def get_models():
             
     return sadtalker, wav2lip, gesture, qwen, style_manager
 
+# --- AI-powered Style Suggestions (MVP) ---
+try:
+    # Use existing style router if present
+    style_router  # type: ignore # noqa
+except NameError:
+    style_router = APIRouter(prefix="/style-presets", tags=["style-presets"])  # type: ignore
+
+try:
+    style_presets  # type: ignore # noqa
+except NameError:
+    # Minimal defaults if not already defined above
+    now_iso = datetime.now(timezone.utc).isoformat()
+    style_presets = {
+        "professional": {
+            "preset_id": "professional",
+            "name": "Professional",
+            "description": "Formal business presentation style",
+            "intensity": 0.6,
+            "smoothness": 0.9,
+            "expressiveness": 0.5,
+            "cultural_context": "GLOBAL",
+            "formality": 0.9,
+            "gesture_frequency": 0.4,
+            "gesture_amplitude": 0.8,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        },
+        "casual": {
+            "preset_id": "casual",
+            "name": "Casual",
+            "description": "Relaxed conversational style",
+            "intensity": 0.7,
+            "smoothness": 0.7,
+            "expressiveness": 0.8,
+            "cultural_context": "GLOBAL",
+            "formality": 0.3,
+            "gesture_frequency": 0.8,
+            "gesture_amplitude": 1.2,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        },
+        "enthusiastic": {
+            "preset_id": "enthusiastic",
+            "name": "Enthusiastic",
+            "description": "High-energy presentation style",
+            "intensity": 0.9,
+            "smoothness": 0.6,
+            "expressiveness": 0.9,
+            "cultural_context": "GLOBAL",
+            "formality": 0.5,
+            "gesture_frequency": 0.9,
+            "gesture_amplitude": 1.5,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        },
+    }
+
+
+@style_router.post("/suggest")
+async def suggest_style(
+    prompt: Optional[str] = Form(None),
+    emotion: Optional[str] = Form(None),
+    cultural_context: Optional[str] = Form(None),
+    formality: Optional[float] = Form(None),
+):
+    try:
+        hints = {
+            'prompt': (prompt or '').lower(),
+            'emotion': (emotion or '').lower(),
+            'culture': (cultural_context or '').upper() if cultural_context else None,
+            'formality': float(formality) if formality is not None else None,
+        }
+        def score(p: Dict[str, Any]) -> float:
+            s = 0.0
+            # formal vs casual
+            if hints['formality'] is not None:
+                try:
+                    s += 1.0 - abs(float(p.get('formality', 0.5)) - hints['formality'])
+                except Exception:
+                    pass
+            # cultural match
+            if hints['culture'] and p.get('cultural_context') == hints['culture']:
+                s += 0.5
+            # prompt keywords
+            pr = hints['prompt']
+            if pr:
+                if any(k in pr for k in ('energy','excite','enthusi')):
+                    s += float(p.get('expressiveness', 0.5))
+                if any(k in pr for k in ('formal','business','corporate')):
+                    s += float(p.get('formality', 0.5))
+                if any(k in pr for k in ('casual','conversational','relax')):
+                    s += 1.0 - abs(float(p.get('formality', 0.5)) - 0.3)
+            # emotion mapping
+            emo = hints['emotion']
+            if emo:
+                if emo in ('happy','excited','enthusiastic'):
+                    s += float(p.get('expressiveness', 0.5))
+                if emo in ('serious','formal','neutral'):
+                    s += float(p.get('smoothness', 0.5))
+            return s
+        presets = list(style_presets.values())
+        ranked = sorted(presets, key=score, reverse=True)
+        return {"success": True, "suggestions": ranked[:3]}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
 # Authentication functions
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)

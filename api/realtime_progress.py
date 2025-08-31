@@ -25,6 +25,8 @@ class RealTimeProgressTracker:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
         self.task_progress: Dict[str, List[ProgressStep]] = {}
+        self.task_start: Dict[str, float] = {}
+        self.task_last_update: Dict[str, float] = {}
     
     async def connect(self, websocket: WebSocket, task_id: str):
         await websocket.accept()
@@ -55,6 +57,10 @@ class RealTimeProgressTracker:
             ProgressStep("completed", "Generation completed", "pending")
         ]
         self.task_progress[task_id] = steps
+        # Track timing
+        now = datetime.now(timezone.utc).timestamp()
+        self.task_start[task_id] = now
+        self.task_last_update[task_id] = now
     
     async def update_step(self, task_id: str, step_id: str, status: str, progress: int = 0, details: str = ""):
         """Update a specific step and broadcast to client"""
@@ -70,10 +76,17 @@ class RealTimeProgressTracker:
                 step.timestamp = datetime.now(timezone.utc).isoformat()
                 break
         
-        # Calculate overall progress
-        completed_steps = sum(1 for step in self.task_progress[task_id] if step.status == "completed")
-        total_steps = len(self.task_progress[task_id])
-        overall_progress = int((completed_steps / total_steps) * 100)
+        # Calculate overall progress (weighted by step completion)
+        steps = self.task_progress[task_id]
+        per_step = 100.0 / max(1, len(steps))
+        accum = 0.0
+        for s in steps:
+            if s.status == "completed":
+                accum += per_step
+            elif s.status == "active":
+                accum += per_step * max(0.0, min(1.0, s.progress / 100.0))
+        overall_progress = int(round(max(0.0, min(100.0, accum))))
+        self.task_last_update[task_id] = datetime.now(timezone.utc).timestamp()
         
         # Broadcast update
         await self.broadcast_progress(task_id, overall_progress)
@@ -102,6 +115,16 @@ class RealTimeProgressTracker:
                     current_step = step
                     break
             
+            # Compute timing metrics
+            now_ts = datetime.now(timezone.utc).timestamp()
+            started_ts = self.task_start.get(task_id, now_ts)
+            elapsed = max(0.0, now_ts - started_ts)
+            est_total = None
+            eta = None
+            if overall_progress and overall_progress > 0:
+                est_total = elapsed / (overall_progress / 100.0)
+                eta = max(0.0, est_total - elapsed)
+
             # Prepare progress data
             progress_data = {
                 "type": "progress_update",
@@ -109,7 +132,11 @@ class RealTimeProgressTracker:
                 "overall_progress": overall_progress,
                 "current_step": asdict(current_step) if current_step else None,
                 "steps": [asdict(step) for step in steps],
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "started_at": datetime.fromtimestamp(started_ts, tz=timezone.utc).isoformat(),
+                "elapsed_seconds": int(elapsed),
+                "eta_seconds": int(eta) if eta is not None else None,
+                "estimated_total_seconds": int(est_total) if est_total is not None else None,
             }
             
             await websocket.send_text(json.dumps(progress_data))

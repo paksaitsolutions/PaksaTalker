@@ -12,6 +12,7 @@ import subprocess
 import logging
 from typing import Optional, Dict, Any, List
 import cv2
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,13 @@ class EMageRealistic:
             logger.info("Loading EMAGE realistic body expression model...")
             
             # Locate EMAGE repository
-            repo_path = Path("EMAGE")
+            override = os.environ.get("PAKSA_EMAGE_ROOT") or os.environ.get("EMAGE_ROOT")
+            repo_path = Path(override) if override else Path("EMAGE")
             if not repo_path.exists():
                 # No repo present; raise a clear error
-                raise RuntimeError("EMAGE repository not found at ./EMAGE. Please clone it and provide checkpoints.")
+                raise RuntimeError(
+                    f"EMAGE repository not found at {repo_path}. Set PAKSA_EMAGE_ROOT/EMAGE_ROOT to the EMAGE python repo or clone it to ./EMAGE."
+                )
 
             # Add likely module roots to sys.path
             import sys

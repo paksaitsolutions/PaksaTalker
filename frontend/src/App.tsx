@@ -9,6 +9,8 @@ interface GenerationSettings {
   gestureLevel: string
   voiceModel: string
   background: string
+  backgroundMode?: 'none' | 'blur' | 'portrait' | 'cinematic' | 'color' | 'image' | 'greenscreen'
+  backgroundColor?: string
   enhanceFace: boolean
   stabilization: boolean
   stylePreset?: any
@@ -25,6 +27,9 @@ interface GenerationProgress {
   taskId?: string
   videoUrl?: string
   completedTasks?: string[]
+  startedAt?: number
+  elapsedSeconds?: number
+  etaSeconds?: number
 }
 
 function App() {
@@ -38,6 +43,8 @@ function App() {
     gestureLevel: 'medium',
     voiceModel: 'en-US-JennyNeural',
     background: 'blur',
+    backgroundMode: 'none',
+    backgroundColor: '#000000',
     enhanceFace: true,
     stabilization: true,
     stylePreset: null,
@@ -54,8 +61,10 @@ function App() {
 
   const audioInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
+  const startedAtRef = useRef<number | null>(null)
 
   const [exprPreview, setExprPreview] = useState<{engine?: string; topBlend?: Array<[string, number]>; topEmotion?: [string, number]}>({})
+  const [bgImageFile, setBgImageFile] = useState<File | null>(null)
 
   // Backend capabilities for auto-toggle of advanced features
   interface BackendCaps { models: { sadtalker: boolean; wav2lip2: boolean; emage: boolean; qwen: boolean; sadtalker_weights?: boolean; mediapipe?: boolean; threeddfa?: boolean; openseeface?: boolean; mini_xception?: boolean } }
@@ -67,6 +76,8 @@ function App() {
         if (j && j.success && j.data && j.data.models) setCaps({models:j.data.models})
       })
       .catch(() => {})
+    // Best-effort ensure model assets are present (non-blocking)
+    fetch('/api/v1/assets/ensure', { method: 'POST' }).catch(() => {})
   }, [])
 
   // Update expression preview whenever image or engine changes
@@ -109,6 +120,9 @@ function App() {
     }
 
     setProgress({ status: 'processing', progress: 10, stage: 'Processing...', completedTasks: ['✓ Input validation complete'] })
+    // Initialize timers
+    startedAtRef.current = Date.now()
+    setProgress(prev => ({ ...prev, startedAt: startedAtRef.current!, elapsedSeconds: 0 }))
     
     try {
       const formData = new FormData()
@@ -146,11 +160,14 @@ function App() {
         const canEmage = caps?.models?.emage
         const canW2L = caps?.models?.wav2lip2
 
-        if (settings.mode === 'fusion') {
-          // Call Fusion API
-          if (settings.preferWav2Lip2) formData.append('preferWav2Lip2', 'true')
-          const resp = await fetch('/api/v1/generate/fusion-video', { method: 'POST', body: formData })
-          data = await resp.json()
+          if (settings.mode === 'fusion') {
+            // Call Fusion API
+            if (settings.preferWav2Lip2) formData.append('preferWav2Lip2', 'true')
+            if (settings.backgroundMode) formData.append('backgroundMode', settings.backgroundMode)
+            if (settings.backgroundColor) formData.append('backgroundColor', settings.backgroundColor)
+            if (bgImageFile) formData.append('backgroundImage', bgImageFile)
+            const resp = await fetch('/api/v1/generate/fusion-video', { method: 'POST', body: formData })
+            data = await resp.json()
         } else if (canEmage || canW2L) {
           formData.append('useSadTalkerFull', 'true')
           formData.append('useEmage', canEmage ? 'true' : 'false')
@@ -234,7 +251,9 @@ function App() {
           }
           
           const progressValue = Math.min(30 + (attempts * 0.05), 90)  // Very slow progress increase
-          const timeElapsed = Math.floor((attempts * 5) / 60)  // Minutes elapsed
+          const startedAt = startedAtRef.current ?? Date.now()
+          const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+          const etaSeconds = progressValue > 0 ? Math.max(0, Math.floor(elapsedSeconds * (100 / progressValue - 1))) : 0
           
           // Simulate completed tasks based on progress
           const completedTasks = ['✓ Input validation complete', '✓ Files uploaded successfully', '✓ Generation task created']
@@ -248,9 +267,12 @@ function App() {
           setProgress({
             status: 'processing',
             progress: progressValue,
-            stage: `Generating video... ${Math.round(progressValue)}% (${timeElapsed}m elapsed)`,
+            stage: 'Generating video...',
             taskId,
-            completedTasks
+            completedTasks,
+            startedAt,
+            elapsedSeconds,
+            etaSeconds
           })
         }
         
@@ -905,19 +927,32 @@ function App() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Background
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Background</label>
                   <select 
-                    value={settings.background}
-                    onChange={(e) => setSettings({...settings, background: e.target.value})}
+                    value={settings.backgroundMode || 'none'}
+                    onChange={(e) => setSettings({...settings, backgroundMode: e.target.value as any})}
                     className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                   >
-                    <option value="original">Original</option>
+                    <option value="none">Original</option>
                     <option value="blur">Blur</option>
-                    <option value="office">Office</option>
-                    <option value="studio">Studio</option>
+                    <option value="portrait">Portrait</option>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="color">Solid Color (green-screen)</option>
+                    <option value="image">Image (green-screen)</option>
+                    <option value="greenscreen">Green Screen (keep original)</option>
                   </select>
+                  {(settings.backgroundMode === 'color' || settings.backgroundMode === 'greenscreen') && (
+                    <div className="mt-2">
+                      <label className="block text-xs text-gray-600 mb-1">Background Color</label>
+                      <input type="color" value={settings.backgroundColor || '#000000'} onChange={(e)=> setSettings({...settings, backgroundColor: e.target.value})} />
+                    </div>
+                  )}
+                  {settings.backgroundMode === 'image' && (
+                    <div className="mt-2">
+                      <label className="block text-xs text-gray-600 mb-1">Background Image</label>
+                      <input type="file" accept="image/*" onChange={(e)=> setBgImageFile(e.target.files?.[0] || null)} />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1045,12 +1080,25 @@ function App() {
 
               {/* Progress Bar */}
               {progress.status === 'processing' && (
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${progress.progress}%` }}
-                  ></div>
-                </div>
+                <>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${progress.progress}%` }}
+                    ></div>
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-600 mt-1">
+                    <span>{Math.round(progress.progress)}% completed</span>
+                    <div className="flex gap-3">
+                      {typeof progress.elapsedSeconds === 'number' && (
+                        <span>Elapsed: {formatTime(progress.elapsedSeconds)}</span>
+                      )}
+                      {typeof progress.etaSeconds === 'number' && (
+                        <span>ETA: {formatTime(progress.etaSeconds)}</span>
+                      )}
+                    </div>
+                  </div>
+                </>
               )}
 
               {/* Error Message */}
@@ -1101,7 +1149,7 @@ function App() {
                     {progress.completedTasks.map((task, index) => (
                       <div key={index} className="text-xs text-green-700 flex items-center">
                         <span className="mr-2">•</span>
-                        {task}
+                        {task.replace(/^\\W\\s?/, '')}
                       </div>
                     ))}
                   </div>
@@ -1170,3 +1218,16 @@ function App() {
 }
 
 export default App
+
+// Utility: format seconds as h:mm:ss or m:ss
+function formatTime(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (h > 0) {
+    return `${h}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+  }
+  return `${m}:${sec.toString().padStart(2, '0')}`
+}
+

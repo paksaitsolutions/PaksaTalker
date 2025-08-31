@@ -16,6 +16,10 @@ interface ProgressData {
   current_step: ProgressStep | null
   steps: ProgressStep[]
   timestamp: string
+  started_at?: string
+  elapsed_seconds?: number
+  eta_seconds?: number | null
+  estimated_total_seconds?: number | null
 }
 
 interface RealTimeProgressProps {
@@ -135,9 +139,15 @@ export default function RealTimeProgress({ taskId, onComplete, onError }: RealTi
           </div>
           <div className="text-right">
             <div className="text-3xl font-bold">{progress.overall_progress}%</div>
-            <div className="flex items-center text-sm">
-              <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
-              {isConnected ? 'Connected' : 'Disconnected'}
+            <div className="flex items-center gap-3 text-sm">
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
+              <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
+              {typeof progress.elapsed_seconds === 'number' && (
+                <span className="opacity-90">Elapsed: {formatTime(progress.elapsed_seconds)}</span>
+              )}
+              {typeof progress.eta_seconds === 'number' && progress.eta_seconds !== null && (
+                <span className="opacity-90">ETA: {formatTime(progress.eta_seconds)}</span>
+              )}
             </div>
           </div>
         </div>
@@ -255,4 +265,15 @@ export default function RealTimeProgress({ taskId, onComplete, onError }: RealTi
       </div>
     </div>
   )
+}
+
+function formatTime(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (h > 0) {
+    return `${h}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+  }
+  return `${m}:${sec.toString().padStart(2, '0')}`
 }

@@ -24,10 +24,18 @@ def _has(module: str) -> bool:
         return False
 
 
+def _openseeface_available() -> bool:
+    # Try importing OSF modules explicitly
+    for m in ("OpenSeeFace.tracker", "OpenSeeFace.facetracker"):
+        if _has(m):
+            return True
+    return False
+
+
 def detect_capabilities() -> Dict[str, bool]:
     return {
         "mediapipe": _has("mediapipe"),
-        "openseeface": _has("openunmix") or _has("osf") or _has("opencv") or False,  # heuristic placeholder
+        "openseeface": _openseeface_available(),
         "threeddfa": _has("TDDFA_V2") or _has("3DDFA_V2") or _has("TDDFA"),
         "mini_xception": _has("models.emotion.fer_model") or _has("keras") or _has("onnxruntime"),
     }
@@ -114,14 +122,23 @@ def _estimate_openseeface(image_path: str) -> ExpressionResult:
         import os
         import cv2
         from OpenSeeFace.tracker import Tracker  # type: ignore
+        try:
+            # Try to ensure models are present and discover model_dir
+            from models.emotion.model_loader import ensure_openseeface_models  # type: ignore
+            md = ensure_openseeface_models()
+        except Exception:
+            md = None
 
         frame = cv2.imread(image_path)
         if frame is None:
             return ExpressionResult(engine="openseeface")
         h, w = frame.shape[:2]
 
-        model_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'OpenSeeFace', 'models')
-        model_dir = os.path.abspath(model_dir)
+        # Prefer env override or ensured models dir
+        model_dir = md or os.environ.get('PAKSA_OSF_ROOT') or os.environ.get('OPENSEEFACE_ROOT')
+        if not model_dir:
+            model_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'OpenSeeFace', 'models')
+            model_dir = os.path.abspath(model_dir)
 
         # Create tracker (single image; set small thread count and silent)
         tr = Tracker(w, h, max_faces=1, silent=True, model_dir=model_dir)

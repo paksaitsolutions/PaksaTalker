@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from typing import Dict, Any
 from pathlib import Path
+import asyncio
 import subprocess
 import importlib
 
@@ -36,8 +37,10 @@ class CapabilitiesResponse(BaseModel):
 
 def _emage_available() -> bool:
     try:
-        # Prefer local repo check to avoid ImportError noise
-        repo = Path('EMAGE')
+        import os
+        # Prefer env override to avoid false negatives
+        override = os.environ.get('PAKSA_EMAGE_ROOT') or os.environ.get('EMAGE_ROOT')
+        repo = Path(override) if override else Path('EMAGE')
         if not repo.exists():
             return False
         models_dir = repo / 'models'
@@ -110,6 +113,28 @@ def _ffmpeg_filters() -> CapabilityFFmpeg:
 
 @router.get("")
 async def get_capabilities() -> CapabilitiesResponse:
+    # Kick asset ensure in background to reduce first-use errors/latency
+    try:
+        from models.emotion.model_loader import ensure_model_downloaded, ensure_emage_weights, ensure_openseeface_models
+        async def _ensure():
+            try:
+                await asyncio.to_thread(ensure_model_downloaded)
+            except Exception:
+                pass
+            try:
+                await asyncio.to_thread(ensure_emage_weights)
+            except Exception:
+                pass
+            try:
+                await asyncio.to_thread(ensure_openseeface_models)
+            except Exception:
+                pass
+        try:
+            asyncio.create_task(_ensure())
+        except Exception:
+            pass
+    except Exception:
+        pass
     from models.expression.engine import detect_capabilities
     expr_caps = detect_capabilities()
     models = CapabilityModels(

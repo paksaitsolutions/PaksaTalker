@@ -134,6 +134,95 @@ def _apply_advanced_effects(input_video: str, profile: str = "cinematic") -> Opt
         logger.warning(f"Advanced effects failed: {e}")
     return None
 
+
+def _apply_background(
+    input_video: str,
+    mode: str = "none",
+    *,
+    bg_image: Optional[str] = None,
+    bg_color: str = "#000000",
+    chroma_color: str = "#00ff00",
+    similarity: float = 0.12,
+    blend: float = 0.08,
+) -> Optional[str]:
+    """Apply background customization or green-screen replacement.
+
+    - mode 'none'|'blur'|'portrait'|'cinematic': defer to _apply_advanced_effects
+    - mode 'greenscreen': requires chroma key; optionally overlay on image or color
+    - mode 'color'/'image': only meaningful with green-screen; otherwise ignored
+    Returns output path or None on failure.
+    """
+    try:
+        ffmpeg_cmd = _find_ffmpeg() or 'ffmpeg'
+        import subprocess, os
+        from pathlib import Path as _P
+
+        if mode in (None, '', 'none'):
+            return None
+        if mode in ('blur', 'portrait', 'cinematic'):
+            return _apply_advanced_effects(input_video, profile=mode if mode != 'blur' else 'portrait')
+
+        # Determine dimensions via ffprobe fallback to 1280x720
+        W, H, FPS = 1280, 720, 25
+        try:
+            import cv2 as _cv
+            cap = _cv.VideoCapture(input_video)
+            if cap.isOpened():
+                W = int(cap.get(_cv.CAP_PROP_FRAME_WIDTH)) or W
+                H = int(cap.get(_cv.CAP_PROP_FRAME_HEIGHT)) or H
+                FPS = int(cap.get(_cv.CAP_PROP_FPS)) or FPS
+            cap.release()
+        except Exception:
+            pass
+
+        # Normalize color strings like '#RRGGBB' -> 0xRRGGBB
+        def _hex(col: str) -> str:
+            c = (col or '').strip()
+            if c.startswith('#'):
+                return '0x' + c[1:]
+            if c.lower().startswith('0x'):
+                return c
+            return c
+
+        out_path = str(_P(input_video).with_name(_P(input_video).stem + "_bg.mp4"))
+
+        # Greenscreen pipeline using chromakey
+        if mode == 'greenscreen':
+            chroma_hex = _hex(chroma_color or '#00ff00')
+            if bg_image and os.path.exists(bg_image):
+                cmd = [
+                    ffmpeg_cmd, '-y',
+                    '-i', input_video,
+                    '-i', bg_image,
+                    '-filter_complex',
+                    f"[1:v][0:v]scale2ref[bg][base];[base]chromakey={chroma_hex}:{similarity}:{blend}[fg];[bg][fg]overlay=shortest=1,format=yuv420p",
+                    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+                    '-c:a', 'aac', '-b:a', '128k', '-shortest', out_path
+                ]
+            else:
+                color_hex = _hex(bg_color or '#000000')
+                cmd = [
+                    ffmpeg_cmd, '-y',
+                    '-i', input_video,
+                    '-f', 'lavfi', '-i', f"color=c={color_hex}:s={W}x{H}:r={FPS}",
+                    '-filter_complex',
+                    f"[1:v][0:v]scale2ref[bg][base];[base]chromakey={chroma_hex}:{similarity}:{blend}[fg];[bg][fg]overlay=shortest=1,format=yuv420p",
+                    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+                    '-c:a', 'aac', '-b:a', '128k', '-shortest', out_path
+                ]
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if res.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 10240:
+                    return out_path
+            except Exception:
+                return None
+            return None
+
+        # 'color' or 'image' without greenscreen: no-op for now
+        return None
+    except Exception:
+        return None
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -190,6 +279,66 @@ if API_ROUTER_AVAILABLE:
     app.include_router(expressions_router, prefix="/api/v1")
     app.include_router(emage_router, prefix="/api/v1")
     app.include_router(diagnostics_router, prefix="/api/v1")
+
+
+# Prefetch frequently used model assets on startup (non-blocking)
+@app.on_event("startup")
+async def _prefetch_assets():
+    async def _run():
+        try:
+            from models.emotion.model_loader import (
+                ensure_model_downloaded,
+                ensure_emage_weights,
+                ensure_openseeface_models,
+            )
+        except Exception:
+            return
+        try:
+            await asyncio.to_thread(ensure_model_downloaded)
+        except Exception:
+            pass
+        try:
+            await asyncio.to_thread(ensure_emage_weights)
+        except Exception:
+            pass
+        try:
+            await asyncio.to_thread(ensure_openseeface_models)
+        except Exception:
+            pass
+    try:
+        asyncio.create_task(_run())
+    except Exception:
+        pass
+
+
+@app.post("/api/v1/assets/ensure")
+async def ensure_assets_endpoint():
+    """Ensure downloadable model assets are present; returns a simple status report."""
+    report: Dict[str, Any] = {}
+    try:
+        from models.emotion.model_loader import (
+            ensure_model_downloaded,
+            ensure_emage_weights,
+            ensure_openseeface_models,
+        )
+        try:
+            ok = await asyncio.to_thread(ensure_model_downloaded)
+            report["emotion_model"] = bool(ok)
+        except Exception as e:
+            report["emotion_model"] = f"error: {e}"
+        try:
+            path = await asyncio.to_thread(ensure_emage_weights)
+            report["emage_weights"] = bool(path)
+        except Exception as e:
+            report["emage_weights"] = f"error: {e}"
+        try:
+            path = await asyncio.to_thread(ensure_openseeface_models)
+            report["openseeface_models"] = bool(path)
+        except Exception as e:
+            report["openseeface_models"] = f"error: {e}"
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+    return {"success": True, "report": report}
 
 # Expressions endpoints (local fallback to ensure availability)
 @app.get("/api/v1/expressions/capabilities")
@@ -295,6 +444,19 @@ async def fusion_video_alias(request: Request):
         emotion = form.get('emotion') or 'neutral'
         style = form.get('style') or 'natural'
         preferWav2Lip2 = form.get('preferWav2Lip2') in ('true', '1', 'yes', True)
+        # Background customization
+        bg_mode = (form.get('backgroundMode') or form.get('background') or 'none').lower()
+        bg_color = form.get('backgroundColor') or '#000000'
+        chroma_color = form.get('chromaColor') or '#00ff00'
+        try:
+            chroma_similarity = float(form.get('similarity') or 0.12)
+        except Exception:
+            chroma_similarity = 0.12
+        try:
+            chroma_blend = float(form.get('blend') or 0.08)
+        except Exception:
+            chroma_blend = 0.08
+        bg_image_upload = form.get('backgroundImage') if 'backgroundImage' in form else None
 
         # Save inputs
         tmp = TEMP_DIR
@@ -364,6 +526,30 @@ async def fusion_video_alias(request: Request):
                     resolution=resolution,
                     prefer_wav2lip2=preferWav2Lip2
                 )
+                # Optional background processing
+                bg_path = None
+                try:
+                    # Save background image upload if provided
+                    bg_image_path = None
+                    if bg_image_upload is not None:
+                        bg_image_path = OUTPUT_DIR / f"{task_id}_bg_{getattr(bg_image_upload, 'filename', 'image') or 'image' }"
+                        with open(bg_image_path, 'wb') as bf:
+                            bf.write(await bg_image_upload.read())
+                        bg_image_path = str(bg_image_path)
+                    res_path = _apply_background(
+                        final,
+                        mode=bg_mode,
+                        bg_image=bg_image_path,
+                        bg_color=bg_color,
+                        chroma_color=chroma_color,
+                        similarity=chroma_similarity,
+                        blend=chroma_blend,
+                    )
+                    if res_path and os.path.exists(res_path):
+                        final = res_path
+                        out_path = Path(final)
+                except Exception:
+                    pass
                 tasks[task_id] = {"status": "completed", "progress": 100, "stage": "Done", "video_url": f"/api/download/{out_path.name}"}
             except Exception as e:
                 tasks[task_id] = {"status": "failed", "progress": 0, "stage": "Failed", "error": str(e)}

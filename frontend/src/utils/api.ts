@@ -163,3 +163,13 @@ export const createCulturalVariants = async (presetId: string) => {
   })
   return response.json()
 }
+
+export const suggestStylePresets = async (params: { prompt?: string; emotion?: string; cultural_context?: string; formality?: number }) => {
+  const form = new FormData()
+  if (params.prompt) form.append('prompt', params.prompt)
+  if (params.emotion) form.append('emotion', params.emotion)
+  if (params.cultural_context) form.append('cultural_context', params.cultural_context)
+  if (typeof params.formality === 'number') form.append('formality', String(params.formality))
+  const response = await fetch(`${API_BASE_URL}/style-presets/suggest`, { method: 'POST', body: form })
+  return response.json()
+}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { createStylePreset, listStylePresets, interpolatePresets, createCulturalVariants } from '../utils/api'
+import { createStylePreset, listStylePresets, interpolatePresets, createCulturalVariants, suggestStylePresets } from '../utils/api'
 
 interface StylePreset {
   preset_id: string
@@ -65,6 +65,32 @@ export default function StyleCustomization({ onStyleChange }: StyleCustomization
       }
     } catch (error) {
       console.error('Failed to load presets:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSuggest = async () => {
+    try {
+      setLoading(true)
+      const params: any = {}
+      if (selectedPreset) {
+        params.cultural_context = selectedPreset.cultural_context
+        params.formality = selectedPreset.formality
+      }
+      const res = await suggestStylePresets(params)
+      if (res && res.success && Array.isArray(res.suggestions) && res.suggestions.length) {
+        setPresets(prev => {
+          const ids = new Set(prev.map(p => p.preset_id))
+          const merged = [...prev]
+          res.suggestions.forEach((p: any) => { if (!ids.has(p.preset_id)) merged.push(p) })
+          return merged
+        })
+        setSelectedPreset(res.suggestions[0])
+        onStyleChange?.(res.suggestions[0])
+      }
+    } catch (e) {
+      console.error('Failed to suggest styles:', e)
     } finally {
       setLoading(false)
     }
@@ -161,6 +187,10 @@ export default function StyleCustomization({ onStyleChange }: StyleCustomization
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Select Style Preset
         </label>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs text-gray-500">Choose from existing presets or get AI suggestions</div>
+          <button onClick={handleSuggest} disabled={loading} className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded hover:bg-indigo-700 disabled:bg-gray-400">{loading ? 'Suggesting...' : 'Suggest Styles'}</button>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {presets.map((preset) => (
             <div
