@@ -272,84 +272,92 @@ function App() {
   }
 
   const pollTaskStatus = async (taskId: string) => {
-    let attempts = 0
-    
+    // Map backend stage strings to human-friendly steps and a rough order
+    const STEP_ORDER = [
+      'Input validation complete',
+      'Files uploaded successfully',
+      'Generation task created',
+      'Starting fusion engine',
+      'Generating body and head tracks',
+      'Encoding final video',
+      'Generation completed',
+    ]
+    const mapStageToIndex = (stage: string | undefined): number => {
+      if (!stage) return 0
+      const s = stage.toLowerCase()
+      if (s.includes('queued')) return 0
+      if (s.includes('initializing fusion')) return 3
+      if (s.includes('ai models initialized')) return 3
+      if (s.includes('starting fusion engine')) return 3
+      if (s.includes('generating body and head tracks')) return 4
+      if (s.includes('encoding')) return 5
+      if (s.includes('completed')) return 6
+      return 0
+    }
+
     const poll = async () => {
       try {
         const response = await fetch(`/api/v1/status/${taskId}`)
         const data = await response.json()
-        
-        if (data.success && data.data) {
-          const { status } = data.data
-          
-          if (status === 'completed') {
-            setProgress({
-              status: 'completed',
-              progress: 100,
-              stage: 'Video generated successfully!',
-              videoUrl: data.data.video_url,
-              completedTasks: [
-                '✓ Input validation complete',
-                '✓ Files uploaded successfully', 
-                '✓ Generation task created',
-                '✓ Audio preprocessing complete',
-                '✓ Face detection complete',
-                '✓ 3D face reconstruction complete',
-                '✓ Expression coefficients generated',
-                '✓ Head pose estimation complete',
-                '✓ Video frames rendered',
-                '✓ Final video compilation complete'
-              ]
-            })
-            return
-          } else if (status === 'failed') {
-            setProgress({
-              status: 'error',
-              progress: 0,
-              stage: 'Generation failed',
-              error: 'Video generation failed'
-            })
-            return
-          }
-          
-          const progressValue = Math.min(30 + (attempts * 0.05), 90)  // Very slow progress increase
-          const startedAt = startedAtRef.current ?? Date.now()
-          const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
-          const etaSeconds = progressValue > 0 ? Math.max(0, Math.floor(elapsedSeconds * (100 / progressValue - 1))) : 0
-          
-          // Simulate completed tasks based on progress
-          const completedTasks = ['✓ Input validation complete', '✓ Files uploaded successfully', '✓ Generation task created']
-          if (progressValue > 35) completedTasks.push('✓ Audio preprocessing complete')
-          if (progressValue > 45) completedTasks.push('✓ Face detection complete')
-          if (progressValue > 55) completedTasks.push('✓ 3D face reconstruction complete')
-          if (progressValue > 65) completedTasks.push('✓ Expression coefficients generated')
-          if (progressValue > 75) completedTasks.push('✓ Head pose estimation complete')
-          if (progressValue > 85) completedTasks.push('✓ Video frames rendered')
-          
+        if (!data || !data.success || !data.data) {
+          setTimeout(poll, 5000); return
+        }
+
+        const d = data.data
+        const status = d.status as 'processing' | 'completed' | 'failed'
+        const stageStr = (d.stage || '').toString()
+        const serverProgress = typeof d.progress === 'number' ? d.progress : undefined
+
+        if (status === 'completed') {
+          setProgress(prev => ({
+            status: 'completed',
+            progress: 100,
+            stage: stageStr || 'Video generated successfully!',
+            videoUrl: d.video_url || prev.videoUrl,
+            completedTasks: STEP_ORDER.map(s => `✓ ${s}`)
+          }))
+          return
+        }
+
+        if (status === 'failed') {
           setProgress({
+            status: 'error',
+            progress: serverProgress ?? 0,
+            stage: stageStr || 'Generation failed',
+            error: d.error || 'Video generation failed'
+          })
+          return
+        }
+
+        // Build completed list based on stage and known early steps
+        const idx = mapStageToIndex(stageStr)
+        const baselineDone = new Set(['Input validation complete', 'Files uploaded successfully', 'Generation task created'])
+        const completed = STEP_ORDER.filter((s, i) => i < idx || baselineDone.has(s)).map(s => `✓ ${s}`)
+        // ETA/Elapsed are updated in a 1s interval elsewhere; keep startedAt if present
+        setProgress(prev => {
+          const startedAt = prev.startedAt ?? Date.now()
+          const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+          const pct = typeof serverProgress === 'number' ? Math.max(0, Math.min(99.9, serverProgress)) : prev.progress || 10
+          const etaSeconds = pct > 1 ? Math.max(0, Math.floor(elapsedSeconds * (100 / pct - 1))) : undefined
+          return {
             status: 'processing',
-            progress: progressValue,
-            stage: 'Generating video...',
+            progress: pct,
+            stage: stageStr || 'Processing...',
             taskId,
-            completedTasks,
+            completedTasks: Array.from(new Set(completed)),
             startedAt,
             elapsedSeconds,
             etaSeconds
-          })
-        }
-        
-        attempts++
-        // No timeout - continue polling until completion or failure
+          }
+        })
+
         setTimeout(poll, 5000)
-        
-      } catch (error) {
-        // Only stop on actual network errors, not timeouts
-        console.error('Status check error:', error)
-        // Retry after a longer delay on network errors
+      } catch (e) {
+        console.error('Status check error:', e)
         setTimeout(poll, 10000)
       }
     }
-    
+
     poll()
   }
 
@@ -1191,13 +1199,13 @@ function App() {
               {progress.status === 'processing' && (
                 <>
                   <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div 
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${progress.progress}%` }}
+                    <div
+                      className={`${(progress.progress ?? 0) >= 90 ? 'bg-green-600' : 'bg-blue-600'} h-2 rounded-full transition-all duration-300`}
+                      style={{ width: `${Math.max(0, Math.min(100, Math.round(progress.progress || 0)))}%` }}
                     ></div>
                   </div>
                   <div className="flex justify-between text-xs text-gray-600 mt-1">
-                    <span>{Math.round(progress.progress)}% completed</span>
+                    <span>{Math.round(progress.progress || 0)}% completed</span>
                     <div className="flex gap-3">
                       {typeof progress.elapsedSeconds === 'number' && (
                         <span>Elapsed: {formatTime(progress.elapsedSeconds)}</span>
@@ -1211,9 +1219,15 @@ function App() {
               )}
 
               {/* Error Message */}
-              {progress.status === 'error' && progress.error && (
+              {progress.status === 'error' && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                  <p className="text-sm text-red-700">{progress.error}</p>
+                  <div className="text-sm text-red-700 font-medium mb-1">Generation failed</div>
+                  {progress.stage && (
+                    <div className="text-xs text-red-700 mb-1">Stage: {progress.stage}</div>
+                  )}
+                  {progress.error && (
+                    <pre className="text-xs text-red-800 whitespace-pre-wrap">{String(progress.error)}</pre>
+                  )}
                 </div>
               )}
 

@@ -116,7 +116,8 @@ class AnimateFromCoeff():
             for k,v in checkpoint.items():
                 if 'generator' in k:
                     x_generator[k.replace('generator.', '')] = v
-            generator.load_state_dict(x_generator)
+            # Load tolerantly to accommodate minor checkpoint/arch differences
+            generator.load_state_dict(x_generator, strict=False)
         if kp_detector is not None:
             x_generator = {}
             for k,v in checkpoint.items():

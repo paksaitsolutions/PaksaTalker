@@ -361,6 +361,24 @@ async def capabilities_fallback():
     except Exception as e:
         return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
 
+# Voices/Languages fallback endpoints when API router is unavailable
+@app.get("/api/v1/voices")
+async def voices_fallback():
+    try:
+        from config.languages import get_all_voices
+        return {"success": True, "voices": get_all_voices()}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+
+@app.get("/api/v1/languages")
+async def languages_fallback():
+    try:
+        from config.languages import get_all_languages
+        return {"success": True, "languages": get_all_languages()}
+    except Exception as e:
+        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
 @app.post("/api/v1/expressions/estimate")
 async def expressions_estimate_fallback(request: Request):
     try:
@@ -404,6 +422,20 @@ async def fusion_video_alias(request: Request):
         preferWav2Lip2 = form.get('preferWav2Lip2') in ('true', '1', 'yes', True)
         preprocess = (form.get('preprocess') or 'full').lower()
         expression_engine = (form.get('expressionEngine') or 'auto').lower()
+
+        # CPU-friendly defaults if no CUDA (opt-in behavior for reliability/speed)
+        try:
+            import torch as _torch
+            _cuda = _torch.cuda.is_available()
+        except Exception:
+            _cuda = False
+        if not _cuda:
+            # Lower FPS unless explicitly provided (do not override preprocess without user consent)
+            if not fps_val:
+                fps = 25
+            # Default to 480p unless caller provided a resolution
+            if not form.get('resolution'):
+                resolution = '480p'
         useEmage = form.get('useEmage')
         if useEmage is not None:
             useEmage = useEmage in ('true', '1', 'yes', True)
@@ -488,10 +520,11 @@ async def fusion_video_alias(request: Request):
         import asyncio as _asyncio
         async def _run():
             try:
-                tasks[task_id].update({"progress": 15, "stage": "Starting fusion"})
+                tasks[task_id].update({"progress": 15, "stage": "Starting fusion engine"})
                 from models.fusion.engine import FusionEngine
                 eng = FusionEngine()
                 out_path = OUTPUT_DIR / f"{task_id}.mp4"
+                tasks[task_id].update({"progress": 40, "stage": "Generating body and head tracks"})
                 final = eng.generate(
                     face_image=str(img_path),
                     audio_path=str(audio_path),
@@ -504,6 +537,7 @@ async def fusion_video_alias(request: Request):
                     use_emage=useEmage if isinstance(useEmage, bool) else None,
                     preprocess=preprocess
                 )
+                tasks[task_id].update({"progress": 95, "stage": "Encoding final video"})
                 # Optional background processing
                 bg_path = None
                 try:
