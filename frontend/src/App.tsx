@@ -18,6 +18,7 @@ interface GenerationSettings {
   expressionEngine?: 'auto' | 'mediapipe' | 'threeddfa' | 'openseeface' | 'mini_xception'
   mode?: 'standard' | 'fusion'
   preferWav2Lip2?: boolean
+  preprocess?: 'full' | 'crop'
 }
 
 interface GenerationProgress {
@@ -52,7 +53,8 @@ function App() {
     stylePreset: null,
     expressionEngine: 'auto',
     mode: 'standard',
-    preferWav2Lip2: false
+    preferWav2Lip2: false,
+    preprocess: 'full'
   })
   const [progress, setProgress] = useState<GenerationProgress>({
     status: 'idle',
@@ -68,6 +70,8 @@ function App() {
   const [exprPreview, setExprPreview] = useState<{engine?: string; topBlend?: Array<[string, number]>; topEmotion?: [string, number]}>({})
   const [bgImageFile, setBgImageFile] = useState<File | null>(null)
   const [modal, setModal] = useState<{ title: string; message: string } | null>(null)
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null)
+  const [voiceList, setVoiceList] = useState<Array<{voice_id:string; language:string; name?:string; gender?:string}>>([])
 
   // Backend capabilities for auto-toggle of advanced features
   interface BackendCaps { models: { sadtalker: boolean; wav2lip2: boolean; emage: boolean; qwen: boolean; sadtalker_weights?: boolean; mediapipe?: boolean; threeddfa?: boolean; openseeface?: boolean; mini_xception?: boolean } }
@@ -81,7 +85,37 @@ function App() {
       .catch(() => {})
     // Best-effort ensure model assets are present (non-blocking)
     fetch('/api/v1/assets/ensure', { method: 'POST' }).catch(() => {})
+    // Fetch sorted voices for dynamic dropdown (fallback to static if fails)
+    fetch('/api/v1/voices').then(r => r.ok ? r.json() : null).then(j => {
+      if (j && j.success && Array.isArray(j.voices)) {
+        setVoiceList(j.voices)
+      }
+    }).catch(() => {})
   }, [])
+
+  // Build a preview URL for the selected image
+  useEffect(() => {
+    if (!imageFile) { setImagePreviewUrl(null); return }
+    const url = URL.createObjectURL(imageFile)
+    setImagePreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [imageFile])
+
+  // Live timer while processing
+  useEffect(() => {
+    if (progress.status !== 'processing') return
+    const id = setInterval(() => {
+      setProgress(prev => {
+        if (prev.status !== 'processing') return prev
+        const start = prev.startedAt ?? Date.now()
+        const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000))
+        const pct = Math.max(0, Math.min(99.9, prev.progress || 0))
+        const eta = pct > 1 ? Math.max(0, Math.floor(elapsed * (100 / pct - 1))) : undefined
+        return { ...prev, startedAt: start, elapsedSeconds: elapsed, etaSeconds: eta }
+      })
+    }, 1000)
+    return () => clearInterval(id)
+  }, [progress.status, progress.startedAt, progress.progress])
 
   // Update expression preview whenever image or engine changes
   useEffect(() => {
@@ -138,6 +172,7 @@ function App() {
         formData.append('fps', settings.fps.toString())
         formData.append('gestureLevel', settings.gestureLevel)
         if (settings.expressionEngine) formData.append('expressionEngine', settings.expressionEngine)
+        if (settings.preprocess) formData.append('preprocess', settings.preprocess)
         if (settings.mode === 'fusion') {
           if (settings.preferWav2Lip2) formData.append('preferWav2Lip2', 'true')
           // No image/audio: endpoint will synthesize TTS and default avatar
@@ -170,6 +205,7 @@ function App() {
         formData.append('resolution', settings.resolution)
         formData.append('fps', settings.fps.toString())
         if (settings.expressionEngine) formData.append('expressionEngine', settings.expressionEngine)
+        if (settings.preprocess) formData.append('preprocess', settings.preprocess)
 
         const canEmage = caps?.models?.emage
         const canW2L = caps?.models?.wav2lip2
@@ -369,7 +405,7 @@ function App() {
             </a>
             
             <a 
-              href="https://docs.paksatalker.com" 
+              href="https://github.com/paksaitsolutions/PaksaTalker/tree/main/docs" 
               target="_blank" 
               rel="noopener noreferrer"
               className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-md hover:shadow-lg"
@@ -573,6 +609,14 @@ function App() {
                   onChange={(e) => setSettings({...settings, voiceModel: e.target.value})}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                 >
+                  {voiceList.length > 0 ? (
+                    voiceList.map(v => (
+                      <option key={v.voice_id} value={v.voice_id}>
+                        {`${v.language} — ${v.name || v.voice_id}${v.gender ? ` (${v.gender})` : ''}`}
+                      </option>
+                    ))
+                  ) : (
+                    <>
                   <optgroup label="🇺🇸 English (US)">
                     <option value="en-US-JennyNeural">Jenny (Female)</option>
                     <option value="en-US-ChristopherNeural">Christopher (Male)</option>
@@ -757,6 +801,8 @@ function App() {
                     <option value="ms-MY-YasminNeural">Yasmin (Female)</option>
                     <option value="ms-MY-OsmanNeural">Osman (Male)</option>
                   </optgroup>
+                    </>
+                  )}
                 </select>
               </div>
               <div>
@@ -1005,10 +1051,10 @@ function App() {
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                 >
                   <option value="auto">Auto</option>
-                  <option value="mediapipe">MediaPipe (Blendshapes)</option>
-                  <option value="threeddfa">3DDFA (3DMM)</option>
-                  <option value="openseeface">OpenSeeFace (Landmarks)</option>
-                  <option value="mini_xception">mini-XCEPTION (Emotions)</option>
+                  <option value="mediapipe" disabled={caps?.models && caps.models.mediapipe === false}>MediaPipe (Blendshapes){caps?.models && caps.models.mediapipe === false ? ' - unavailable' : ''}</option>
+                  <option value="threeddfa" disabled={caps?.models && caps.models.threeddfa === false}>3DDFA (3DMM){caps?.models && caps.models.threeddfa === false ? ' - unavailable' : ''}</option>
+                  <option value="openseeface" disabled={caps?.models && caps.models.openseeface === false}>OpenSeeFace (Landmarks){caps?.models && caps.models.openseeface === false ? ' - unavailable' : ''}</option>
+                  <option value="mini_xception" disabled={caps?.models && caps.models.mini_xception === false}>mini-XCEPTION (Emotions){caps?.models && caps.models.mini_xception === false ? ' - unavailable' : ''}</option>
                 </select>
                 <p className="text-xs text-gray-400 mt-1">Select the expression estimator to guide animation.</p>
               </div>
@@ -1070,6 +1116,15 @@ function App() {
                     className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
                   />
                   <span className="ml-2 text-sm text-gray-700">Stabilization</span>
+                </label>
+                <label className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={settings.preprocess === 'crop'}
+                    onChange={(e) => setSettings({...settings, preprocess: e.target.checked ? 'crop' : 'full'})}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                  />
+                  <span className="ml-2 text-sm text-gray-700">Crop Image (SadTalker)</span>
                 </label>
               </div>
             </div>
@@ -1210,6 +1265,34 @@ function App() {
                 </div>
               )}
 
+              {/* In-Progress Tasks */}
+              {progress.status === 'processing' && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                  <h4 className="text-sm font-medium text-yellow-800 mb-2">In Progress</h4>
+                  <div className="space-y-1 text-xs text-yellow-700">
+                    {(() => {
+                      const STEPS = [
+                        'Input validation complete',
+                        'Files uploaded successfully',
+                        'Generation task created',
+                        'Audio preprocessing complete',
+                        'Face detection complete',
+                        '3D face reconstruction complete',
+                        'Expression coefficients generated',
+                        'Head pose estimation complete',
+                        'Video frames rendered',
+                        'Final video compilation complete'
+                      ]
+                      const done = new Set((progress.completedTasks || []).map(t => t.replace(/^\\W\\s?/, '')))
+                      const pending = STEPS.filter(s => !done.has(s)).slice(0, 3)
+                      return pending.length ? pending.map((s, i) => (
+                        <div key={i} className="flex items-center"><span className="mr-2">•</span>{s}</div>
+                      )) : <div>Finalizing output...</div>
+                    })()}
+                  </div>
+                </div>
+              )}
+
               {/* Generation Info */}
               <div className="bg-gray-50 rounded-lg p-3">
                 <h4 className="text-sm font-medium text-gray-700 mb-2">Generation Info</h4>
@@ -1226,7 +1309,39 @@ function App() {
             </div>
           </div>
           
-          {/* Removed extra Advanced Settings panel; advanced controls are inside unified settings */}
+          {/* Live Preview (Right) */}
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+            <div className="flex items-center mb-6">
+              <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl flex items-center justify-center mr-3 shadow-lg">
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 6h8a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-semibold text-gray-900">Live Preview</h2>
+            </div>
+
+            {progress.videoUrl ? (
+              <video
+                key={progress.videoUrl}
+                src={progress.videoUrl}
+                controls
+                autoPlay
+                loop
+                muted
+                className="w-full rounded-lg border border-gray-200 shadow"
+              />
+            ) : imagePreviewUrl ? (
+              <img src={imagePreviewUrl} alt="Preview"
+                   className="w-full rounded-lg border border-gray-200 shadow object-contain max-h-[420px]" />
+            ) : (
+              <div className="h-64 flex items-center justify-center text-gray-400 border border-dashed border-gray-300 rounded-lg">
+                Upload an image to see the preview here
+              </div>
+            )}
+            {progress.status === 'processing' && !progress.videoUrl && (
+              <div className="mt-3 text-xs text-gray-500">Rendering... you can continue editing settings.</div>
+            )}
+          </div>
         </div>
         
         {/* Footer with Copyright */}
@@ -1242,20 +1357,19 @@ function App() {
               
               <div className="flex items-center gap-6 text-sm text-gray-600">
                 <a href="mailto:info@paksait.com" className="hover:text-blue-600 transition-colors">
-                  info@paksait.com
+                  info@paksa.com.pk
                 </a>
                 <a href="tel:+923001234567" className="hover:text-blue-600 transition-colors">
-                  +92 300 123 4567
+                  +92 305 777 2572
                 </a>
                 <a href="https://paksait.com" target="_blank" rel="noopener noreferrer" className="hover:text-blue-600 transition-colors">
-                  www.paksait.com
+                  www.paksa.com.pk
                 </a>
               </div>
             </div>
             
             <div className="text-sm text-gray-500 mb-4">
               <p>© {new Date().getFullYear()} Paksa IT Solutions. All rights reserved.</p>
-              <p className="mt-1">Powered by cutting-edge AI technology for next-generation video synthesis</p>
             </div>
             
             <div className="flex justify-center gap-6 text-xs text-gray-400">

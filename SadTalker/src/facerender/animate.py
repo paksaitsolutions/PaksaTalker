@@ -37,19 +37,21 @@ class AnimateFromCoeff():
         with open(sadtalker_path['facerender_yaml']) as f:
             config = yaml.safe_load(f)
 
-        generator = OcclusionAwareSPADEGenerator(**config['model_params']['generator_params'],
-                                                    **config['model_params']['common_params'])
+        gen_params = {**config['model_params']['generator_params'], **config['model_params']['common_params']}
+        # Prefer SPADE generator, but fall back to the plain generator if checkpoint
+        # keys are incompatible (different arch across releases/checkpoints).
+        generator_spade = OcclusionAwareSPADEGenerator(**gen_params)
         kp_extractor = KPDetector(**config['model_params']['kp_detector_params'],
                                     **config['model_params']['common_params'])
         he_estimator = HEEstimator(**config['model_params']['he_estimator_params'],
                                **config['model_params']['common_params'])
         mapping = MappingNet(**config['model_params']['mapping_params'])
 
-        generator.to(device)
+        generator_spade.to(device)
         kp_extractor.to(device)
         he_estimator.to(device)
         mapping.to(device)
-        for param in generator.parameters():
+        for param in generator_spade.parameters():
             param.requires_grad = False
         for param in kp_extractor.parameters():
             param.requires_grad = False 
@@ -59,10 +61,30 @@ class AnimateFromCoeff():
             param.requires_grad = False
 
         if sadtalker_path is not None:
-            if 'checkpoint' in sadtalker_path: # use safe tensor
-                self.load_cpk_facevid2vid_safetensor(sadtalker_path['checkpoint'], kp_detector=kp_extractor, generator=generator, he_estimator=None)
+            if 'checkpoint' in sadtalker_path:  # use safetensor
+                try:
+                    self.load_cpk_facevid2vid_safetensor(
+                        sadtalker_path['checkpoint'], kp_detector=kp_extractor, generator=generator_spade, he_estimator=None
+                    )
+                    generator = generator_spade
+                except Exception as e:
+                    print('SPADE generator load failed; falling back to non-SPADE generator. Reason:', str(e)[:200])
+                    generator_plain = OcclusionAwareGenerator(**gen_params)
+                    generator_plain.to(device)
+                    for p in generator_plain.parameters():
+                        p.requires_grad = False
+                    self.load_cpk_facevid2vid_safetensor(
+                        sadtalker_path['checkpoint'], kp_detector=kp_extractor, generator=generator_plain, he_estimator=None
+                    )
+                    generator = generator_plain
             else:
-                self.load_cpk_facevid2vid(sadtalker_path['free_view_checkpoint'], kp_detector=kp_extractor, generator=generator, he_estimator=he_estimator)
+                generator = OcclusionAwareGenerator(**gen_params)
+                generator.to(device)
+                for p in generator.parameters():
+                    p.requires_grad = False
+                self.load_cpk_facevid2vid(
+                    sadtalker_path['free_view_checkpoint'], kp_detector=kp_extractor, generator=generator, he_estimator=he_estimator
+                )
         else:
             raise AttributeError("Checkpoint should be specified for video head pose estimator.")
 
@@ -254,4 +276,3 @@ class AnimateFromCoeff():
         os.remove(new_audio_path)
 
         return return_path
-

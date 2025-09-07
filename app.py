@@ -431,28 +431,17 @@ def custom_openapi() -> Dict[str, Any]:
         }
     }
 
-    except Exception as e:
-        logger.error(f"Failed to build OpenAPI schema: {str(e)}")
-        raise
-        logger.error(f"Failed to build OpenAPI schema: {str(e)}")
-        raise
-
-    try:
         # Cache the generated schema
         app.openapi_schema = openapi_schema
         return app.openapi_schema
-    except Exception as e:
-        logger.error(f"Failed to cache OpenAPI schema: {str(e)}")
-        return openapi_schema  # Still return the schema even if caching fails
+        
     except Exception as e:
         logger.error(f"Failed to generate OpenAPI schema: {str(e)}")
-        # Return a minimal valid schema if generation fails
         return {
             "openapi": "3.0.2",
             "info": {
                 "title": "PaksaTalker API",
-                "version": "1.0.0",
-                "description": "Error generating full documentation. Please check server logs."
+                "version": "1.0.0"
             },
             "paths": {}
         }

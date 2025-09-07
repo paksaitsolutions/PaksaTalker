@@ -497,7 +497,7 @@ def get_default_voice(lang_code: str) -> str:
 
 def get_all_languages() -> list:
     """Get all supported languages."""
-    return [
+    langs = [
         {
             "code": code,
             "name": info["name"],
@@ -506,6 +506,9 @@ def get_all_languages() -> list:
         }
         for code, info in SUPPORTED_LANGUAGES.items()
     ]
+    # Sort alphabetically by display name
+    langs.sort(key=lambda x: x["name"].lower())
+    return langs
 
 def get_all_voices() -> list:
     """Get all supported voices."""
@@ -519,4 +522,6 @@ def get_all_voices() -> list:
                 "flag": lang_info["flag"],
                 **voice_info
             })
+    # Sort alphabetically: by language name, then by voice display name
+    voices.sort(key=lambda v: (v.get("language", "").lower(), v.get("name", "").lower()))
     return voices

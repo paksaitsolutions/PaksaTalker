@@ -1,7 +1,12 @@
 import os
 import torch 
 
-from gfpgan import GFPGANer
+# GFPGAN is optional. Import lazily/defensively so that merely importing
+# this module does not crash when face enhancement is disabled.
+try:
+    from gfpgan import GFPGANer  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    GFPGANer = None  # Will be checked at runtime if enhancer is actually used
 
 from tqdm import tqdm
 
@@ -50,6 +55,11 @@ def enhancer_generator_no_len(images, method='gfpgan', bg_upsampler='realesrgan'
 
     # ------------------------ set up GFPGAN restorer ------------------------
     if  method == 'gfpgan':
+        if GFPGANer is None:
+            raise ImportError(
+                "GFPGAN not installed or incompatible. Install gfpgan and basicsr, "
+                "or disable face enhancement by not setting --enhancer."
+            )
         arch = 'clean'
         channel_multiplier = 2
         model_name = 'GFPGANv1.4'
@@ -99,6 +109,11 @@ def enhancer_generator_no_len(images, method='gfpgan', bg_upsampler='realesrgan'
     if not os.path.isfile(model_path):
         # download pre-trained models from url
         model_path = url
+
+    if GFPGANer is None:
+        # This should never happen because we guard above for the active method.
+        # Keep a clear error in case of misuse.
+        raise ImportError("GFPGANer not available; cannot run face enhancement")
 
     restorer = GFPGANer(
         model_path=model_path,

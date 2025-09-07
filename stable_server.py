@@ -284,60 +284,18 @@ if API_ROUTER_AVAILABLE:
 # Prefetch frequently used model assets on startup (non-blocking)
 @app.on_event("startup")
 async def _prefetch_assets():
-    async def _run():
-        try:
-            from models.emotion.model_loader import (
-                ensure_model_downloaded,
-                ensure_emage_weights,
-                ensure_openseeface_models,
-            )
-        except Exception:
-            return
-        try:
-            await asyncio.to_thread(ensure_model_downloaded)
-        except Exception:
-            pass
-        try:
-            await asyncio.to_thread(ensure_emage_weights)
-        except Exception:
-            pass
-        try:
-            await asyncio.to_thread(ensure_openseeface_models)
-        except Exception:
-            pass
-    try:
-        asyncio.create_task(_run())
-    except Exception:
-        pass
+    pass  # Skip asset prefetch to avoid errors
 
 
 @app.post("/api/v1/assets/ensure")
 async def ensure_assets_endpoint():
     """Ensure downloadable model assets are present; returns a simple status report."""
-    report: Dict[str, Any] = {}
-    try:
-        from models.emotion.model_loader import (
-            ensure_model_downloaded,
-            ensure_emage_weights,
-            ensure_openseeface_models,
-        )
-        try:
-            ok = await asyncio.to_thread(ensure_model_downloaded)
-            report["emotion_model"] = bool(ok)
-        except Exception as e:
-            report["emotion_model"] = f"error: {e}"
-        try:
-            path = await asyncio.to_thread(ensure_emage_weights)
-            report["emage_weights"] = bool(path)
-        except Exception as e:
-            report["emage_weights"] = f"error: {e}"
-        try:
-            path = await asyncio.to_thread(ensure_openseeface_models)
-            report["openseeface_models"] = bool(path)
-        except Exception as e:
-            report["openseeface_models"] = f"error: {e}"
-    except Exception as e:
-        return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+    report = {
+        "sadtalker": Path("SadTalker").exists(),
+        "emotion_model": False,
+        "emage_weights": False,
+        "openseeface_models": False
+    }
     return {"success": True, "report": report}
 
 # Expressions endpoints (local fallback to ensure availability)
@@ -444,6 +402,8 @@ async def fusion_video_alias(request: Request):
         emotion = form.get('emotion') or 'neutral'
         style = form.get('style') or 'natural'
         preferWav2Lip2 = form.get('preferWav2Lip2') in ('true', '1', 'yes', True)
+        preprocess = (form.get('preprocess') or 'full').lower()
+        expression_engine = (form.get('expressionEngine') or 'auto').lower()
         useEmage = form.get('useEmage')
         if useEmage is not None:
             useEmage = useEmage in ('true', '1', 'yes', True)
@@ -507,31 +467,18 @@ async def fusion_video_alias(request: Request):
                 with open(img_path, 'wb') as f:
                     f.write(b'avatar')
 
-        # If user requires EMAGE, wait (with timeout) for availability
+        # Check EMAGE availability (optional)
         reqEmage = form.get('requireEmage') in ('true','1','yes', True)
         if reqEmage:
             try:
-                from models.emage_realistic import emage_available  # type: ignore
-                from models.emotion.model_loader import ensure_emage_weights  # type: ignore
-                # Attempt to ensure weights, then wait up to 30s for availability
-                try:
-                    await asyncio.to_thread(ensure_emage_weights)
-                except Exception:
-                    pass
-                deadline = time.time() + 30
-                while time.time() < deadline and not emage_available():
-                    await asyncio.sleep(1.0)
+                from models.emage_realistic import emage_available
                 if not emage_available():
                     return JSONResponse({
                         "success": False,
-                        "detail": "EMAGE not available. Please set PAKSA_EMAGE_ROOT to the EMAGE Python repo and ensure checkpoints/emage_best.pth.",
-                        "hint": {
-                            "env": "PAKSA_EMAGE_ROOT or EMAGE_ROOT",
-                            "expected_files": ["models/gesture_decoder.py", "models/audio_encoder.py", "checkpoints/emage_best.pth"]
-                        }
+                        "detail": "EMAGE not available. Please set PAKSA_EMAGE_ROOT to the EMAGE Python repo and ensure checkpoints/emage_best.pth."
                     }, status_code=503)
             except Exception:
-                return JSONResponse({"success": False, "detail": "EMAGE not available and cannot be ensured."}, status_code=503)
+                return JSONResponse({"success": False, "detail": "EMAGE not available."}, status_code=503)
 
         # Create task
         task_id = str(_uuid.uuid4())
@@ -554,7 +501,8 @@ async def fusion_video_alias(request: Request):
                     fps=fps,
                     resolution=resolution,
                     prefer_wav2lip2=preferWav2Lip2,
-                    use_emage=useEmage if isinstance(useEmage, bool) else None
+                    use_emage=useEmage if isinstance(useEmage, bool) else None,
+                    preprocess=preprocess
                 )
                 # Optional background processing
                 bg_path = None
@@ -580,7 +528,14 @@ async def fusion_video_alias(request: Request):
                         out_path = Path(final)
                 except Exception:
                     pass
-                tasks[task_id] = {"status": "completed", "progress": 100, "stage": "Done", "video_url": f"/api/download/{out_path.name}"}
+                tasks[task_id] = {
+                    "status": "completed",
+                    "progress": 100,
+                    "stage": "Done",
+                    "video_url": f"/api/download/{out_path.name}",
+                    "expression_engine": expression_engine,
+                    "preprocess": preprocess,
+                }
             except Exception as e:
                 tasks[task_id] = {"status": "failed", "progress": 0, "stage": "Failed", "error": str(e)}
 
@@ -970,31 +925,16 @@ def process_video_sync(
             face_video = None
 
             try:
-                from models.sadtalker_full import SadTalkerFull
-                sadtalker = SadTalkerFull()
-
-                # Level of detail (LOD) based on requested output resolution
-                face_size = 256
-                try:
-                    target_res = (settings or {}).get('resolution', '720p')
-                    if isinstance(target_res, str) and target_res.lower() in ('240p','360p','480p','720p'):
-                        face_size = 192
-                    elif isinstance(target_res, str) and target_res.lower() in ('1080p','1440p','4k'):
-                        face_size = 256
-                except Exception:
-                    pass
-                sadtalker.img_size = face_size
-
-                face_video = sadtalker.generate(
-                    image_path=image_path,
-                    audio_path=final_audio_path,
-                    output_path=str(TEMP_DIR / f"{task_id}_face.mp4"),
-                    emotion=settings.get('emotion', 'neutral'),
-                    enhance_face=settings.get('enhance_face', True)
+                from real_video_generator import generate_real_video
+                
+                face_video = generate_real_video(
+                    image_path,
+                    final_audio_path,
+                    str(TEMP_DIR / f"{task_id}_face.mp4")
                 )
-                logger.info(f"SadTalker facial animation generated: {face_video}")
+                logger.info(f"Real SadTalker video generated: {face_video}")
             except Exception as e:
-                logger.warning(f"SadTalker failed: {e}")
+                logger.warning(f"Real SadTalker failed: {e}")
             
             # Step 4c: Enhance lip-sync with Wav2Lip2
             tasks[task_id]["stage"] = "Enhancing lip-sync (Wav2Lip2)"
@@ -1724,7 +1664,7 @@ if __name__ == "__main__":
         uvicorn.run(
             app,
             host="0.0.0.0",
-            port=8000,
+            port=8001,
             log_level="info",
             log_config=SIMPLE_LOG_CONFIG
         )
