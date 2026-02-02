@@ -58,7 +58,7 @@ mdurl==0.1.2
 mediapipe==0.10.21
 narwhals==2.1.2
 networkx==3.4.2
-numba==0.60.0
+numba==0.63.1
 numpy==1.26.4
 opencv-python==4.12.0.88
 opt_einsum==3.4.0
