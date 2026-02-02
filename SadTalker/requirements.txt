@@ -9,7 +9,7 @@ audioread==3.0.1
 av==16.0.1
 basicsr==1.4.2
 Brotli==1.2.0
-certifi==2022.12.7
+certifi==2026.1.4
 cffi==1.17.1
 charset-normalizer==2.1.1
 click==8.2.1
