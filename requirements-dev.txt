@@ -7,7 +7,7 @@ httpx>=0.23.0
 
 # Linting
 black>=22.0.0
-isort>=5.10.0
+isort>=8.0.1
 flake8>=4.0.0
 mypy>=0.910
 

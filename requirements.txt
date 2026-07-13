@@ -48,7 +48,7 @@ python-dateutil>=2.8.2
 # Development
 pytest>=6.2.5
 black>=21.12b0
-isort>=5.10.1
+isort>=8.0.1
 mypy>=0.910
 
 # Platform Specific
